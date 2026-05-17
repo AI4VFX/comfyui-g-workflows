@@ -18,7 +18,7 @@ Repository = "https://github.com/AI4VFX/comfyui-g-workflows"
 Issues = "https://github.com/AI4VFX/comfyui-g-workflows/issues"
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "ai4vfx"
 DisplayName = "G-Workflows"
 Icon = ""
 
