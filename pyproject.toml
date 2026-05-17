@@ -1,0 +1,26 @@
+[project]
+name = "comfyui-g-workflows"
+description = "A workflow browser & organizer for ComfyUI that operates on the real user/default/workflows folder plus any number of extra disk locations. Thumbnail gallery (auto-normalized 800x450, set/capture/drag-drop) and details List view, global cross-location filename search, stackable Name/Date sort, favorites and per-workflow descriptions, full file/folder CRUD with multi-select (Ctrl/Shift range) and mandatory delete confirmation, and a Save button that recognizes the workflow you already have open. UI extension only — adds no graph nodes."
+version = "1.0.0"
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["comfyui", "workflow", "workflows", "thumbnails", "browser", "organizer", "ui", "productivity"]
+
+dependencies = []
+
+[[project.authors]]
+name = "Greg"
+
+[project.urls]
+Homepage = "https://github.com/AI4VFX/comfyui-g-workflows"
+Repository = "https://github.com/AI4VFX/comfyui-g-workflows"
+Issues = "https://github.com/AI4VFX/comfyui-g-workflows/issues"
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "G-Workflows"
+Icon = ""
+
+# Frontend extension: no native nodes
+includes = ["js"]
