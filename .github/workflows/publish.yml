@@ -1,0 +1,29 @@
+name: Publish to Comfy Registry
+
+# Auto-publishes to registry.comfy.org whenever pyproject.toml changes on
+# main (i.e. on a version bump), and on-demand from the Actions tab.
+# Requires a repo secret REGISTRY_ACCESS_TOKEN holding a Comfy Registry
+# API key, and a [tool.comfy] PublisherId set in pyproject.toml.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
+
+permissions:
+  issues: write
+
+jobs:
+  publish-node:
+    name: Publish custom node to the Comfy Registry
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'AI4VFX' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Publish
+        uses: Comfy-Org/publish-node-action@v1
+        with:
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
