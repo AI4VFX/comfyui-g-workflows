@@ -64,7 +64,7 @@ Workflows pair with a sidecar image by name (`Portrait.json` ↔
 `Portrait.jpg`). Set one from a file, **capture the current canvas**, or drag
 an image straight onto a card. Everything the panel writes is normalized to a
 crisp **800×450 JPEG**, and thumbnails follow the workflow through every
-rename / copy / move / delete. "Remove thumbnail" keeps the bytes on disk
+rename / copy / move / delete. "Remove thumbnail" keeps the image on disk
 (renamed `.removed`) so nothing is ever silently destroyed.
 
 ![Thumbnail gallery](docs/GW002.png)
@@ -201,20 +201,6 @@ operation is confined to the selected location via `os.path.commonpath`
 Registered extra locations are persisted server-side to
 `ComfyUI/user/g_workflows_roots.json` (an allowlist — only folders you add
 are ever reachable).
-
----
-
-## 🛠️ Contributing
-
-PRs welcome. A couple of intentional quirks so you don't "fix" them:
-
-- Internal identifiers keep a legacy `greg` / `GregTemplates` spelling (the
-  API route prefix `/comfy_greg_templates/*`, the `localStorage` key, the
-  extension name, command ids, `gt-` CSS). These are **deliberately
-  unchanged** — renaming them breaks the backend contract and wipes users'
-  saved UI state. The display name is "G-Workflows"; the internals are not.
-- The UI is one self-contained file (`js/g_workflows.js`) and the backend is
-  one file (`__init__.py`). No build step.
 
 ---
 
