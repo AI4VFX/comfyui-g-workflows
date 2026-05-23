@@ -733,6 +733,12 @@ const CSS = `
 .gt-card .name { font-size:12px; word-break:break-word; }
 .gt-card .date { font-size:12px; opacity:.55; margin-top:2px; }
 .gt-card .desc { font-size:12px; color:#ffe14d; opacity:1; margin-top:3px; line-height:1.3; min-height:2.6em; max-height:2.6em; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
+.gt-card .tags { margin-top:6px; display:flex; flex-wrap:nowrap; overflow:hidden; gap:4px; min-height:18px; }
+.gt-card .tags .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:10px; cursor:pointer; white-space:nowrap; flex-shrink:0; user-select:none; }
+.gt-card .tags .pill:hover { background:#353c47; }
+.gt-card .tags .pill.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
+.gt-card .tags .pill.empty { font-style:italic; color:#6a737d; cursor:default; border-style:dashed; }
+.gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-empty { padding:16px; opacity:.6; text-align:center; }
 .gt-grid.gt-aslist { display:block; }
@@ -2057,6 +2063,21 @@ function renderCard(f) {
   const desc = el("div", { class: "desc" });
   desc.textContent = (f.description || "").trim();
   meta.appendChild(name); meta.appendChild(date); meta.appendChild(desc);
+  const tags = el("div", { class: "tags" });
+  const tagList = Array.isArray(f.tags) ? f.tags : [];
+  if (!tagList.length) {
+    const empty = el("span", { class: "pill empty", text: "(no tags)" });
+    tags.appendChild(empty);
+    tags.title = "";
+  } else {
+    for (const t of tagList) {
+      const pill = el("span", { class: "pill", text: t });
+      pill.title = t;
+      tags.appendChild(pill);
+    }
+    tags.title = tagList.join(", ");
+  }
+  meta.appendChild(tags);
   card.appendChild(thumb); card.appendChild(meta);
   card.appendChild(makeFavStar(f));
   wireFileEl(card, f);
