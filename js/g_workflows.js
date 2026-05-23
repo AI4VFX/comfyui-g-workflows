@@ -2052,16 +2052,16 @@ function renderGrid() {
     gridEl.appendChild(notice);
   }
   if (!files.length) {
-    const empty = el(“div”, { class: “gt-empty” });
+    const empty = el("div", { class: "gt-empty" });
     empty.textContent = state.tagFilter
-      ? `No workflows tagged “${state.tagFilter}”.`
+      ? `No workflows tagged "${state.tagFilter}".`
       : searching
-      ? `No workflows match “${q}”.`
+      ? `No workflows match "${q}".`
       : state.favoritesOnly
-      ? “No favorites here. Click the ☆ on a workflow's thumbnail to add one.”
+      ? "No favorites here. Click the ☆ on a workflow's thumbnail to add one."
       : state.recurseSubfolders
-      ? “No workflows in this folder or any of its subfolders.”
-      : “No workflows in this folder. Drag a .json here or click 'Save As…'.”;
+      ? "No workflows in this folder or any of its subfolders."
+      : "No workflows in this folder. Drag a .json here or click 'Save As…'.";
     gridEl.appendChild(empty);
     return;
   }
