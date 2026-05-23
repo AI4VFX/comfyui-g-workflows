@@ -52,6 +52,8 @@ const state = {
   tagPaneEl: null,            // captured at panel construction (used by renderTagPane in Task 12)
   tagFilter: null,            // null = no filter; lowercase string = active tag (Task 13)
   tagClipboard: [],           // shared one-buffer tag clipboard (Task 18)
+  draftTags: new Set(),       // tag names with 0 workflow assignments; created via the + button
+                              // in the tag pane and consumed via drag-drop or paste
 };
 
 function loadLS() {
@@ -99,6 +101,9 @@ function loadLS() {
       state.cardSort = [{ key: parsed.cardSort.key, dir: parsed.cardSort.dir }];  // migrate legacy single
     }
     if (typeof parsed.splitPos === "number" && parsed.splitPos > 0.1 && parsed.splitPos < 0.9) state.splitPos = parsed.splitPos;
+    if (Array.isArray(parsed.draftTags)) {
+      state.draftTags = new Set(parsed.draftTags.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim().toLowerCase()));
+    }
   } catch (_) {}
 }
 function saveLS() {
@@ -115,6 +120,7 @@ function saveLS() {
       listSort: state.listSort,
       cardSort: state.cardSort,
       splitPos: state.splitPos,
+      draftTags: Array.from(state.draftTags),
     }));
   } catch (_) {}
 }
@@ -460,11 +466,23 @@ async function editDescription(workflowPath) {
 }
 
 async function renameTagGlobal(oldName) {
+  const counts = aggregateAllTags();
+  const isDraft = state.draftTags.has(oldName) && !counts.has(oldName);
   const next = await promptModal(`Rename tag "${oldName}"`, "New name:", oldName);
   if (next === null) return;
   const dst = (next || "").trim().toLowerCase();
   if (!dst) { toast("Tag name cannot be empty"); return; }
   if (dst === oldName) return;
+  if (isDraft) {
+    // No backend call needed — just rename in the in-memory drafts set.
+    state.draftTags.delete(oldName);
+    state.draftTags.add(dst);
+    if (state.tagFilter === oldName) state.tagFilter = dst;
+    saveLS();
+    renderAll();
+    toast(`Renamed draft tag "${oldName}" → "${dst}"`);
+    return;
+  }
   try {
     const r = await apiPost("/rename_tag", { from: oldName, to: dst });
     await refreshTree();
@@ -476,6 +494,17 @@ async function renameTagGlobal(oldName) {
 }
 
 async function deleteTagGlobal(name) {
+  const counts = aggregateAllTags();
+  const isDraft = state.draftTags.has(name) && !counts.has(name);
+  if (isDraft) {
+    // No backend, no confirmation needed — drafts hold no data.
+    state.draftTags.delete(name);
+    if (state.tagFilter === name) state.tagFilter = null;
+    saveLS();
+    renderAll();
+    toast(`Removed draft tag "${name}"`);
+    return;
+  }
   const ok = await confirmModal(
     "Remove tag?",
     `Remove the tag "${name}" from every workflow that has it?\n\n` +
@@ -489,6 +518,69 @@ async function deleteTagGlobal(name) {
     renderAll();
     toast(`Removed "${name}" from ${r.affected} workflow(s)`);
   } catch (e) { toast("Delete tag failed: " + e.message); }
+}
+
+// Prompt for a new tag name and register it as a draft (count 0). Drafts
+// only exist client-side until a workflow gets tagged with them — the next
+// renderTagPane drops the draft entry automatically when aggregateAllTags
+// reports a non-zero count for it.
+async function addEmptyTag() {
+  const raw = await promptModal("Add tag", "New tag name (lowercase, no newlines):", "");
+  if (raw === null) return;
+  const name = (raw || "").trim().toLowerCase();
+  if (!name) { toast("Tag name cannot be empty"); return; }
+  const counts = aggregateAllTags();
+  if (counts.has(name)) {
+    toast(`Tag "${name}" already exists with ${counts.get(name)} workflow(s)`);
+    state.tagFilter = name;   // make it visible
+    renderAll();
+    return;
+  }
+  if (state.draftTags.has(name)) {
+    toast(`Draft tag "${name}" already in the list`);
+    state.tagFilter = name;
+    renderAll();
+    return;
+  }
+  state.draftTags.add(name);
+  state.tagFilter = name;     // highlight + activate so the user can drag onto it immediately
+  saveLS();
+  renderAll();
+  toast(`Added draft tag "${name}". Drag workflows onto it to assign.`);
+}
+
+// Apply a tag to a set of workflows by merging into each one's existing
+// tag list (no destructive overwrite). Called from the tag-pane drop handler.
+async function assignTagToWorkflows(tag, workflowPaths) {
+  let okCount = 0;
+  let alreadyCount = 0;
+  for (const p of workflowPaths) {
+    let entry = null, rootId = state.rootId;
+    for (const r of state.roots) {
+      if (!r || !r.tree) continue;
+      for (const f of collectFilesRecursive(r.tree)) {
+        if (f.path === p) { entry = f; rootId = r.id; break; }
+      }
+      if (entry) break;
+    }
+    const existing = (entry && Array.isArray(entry.tags)) ? entry.tags : [];
+    if (existing.indexOf(tag) >= 0) { alreadyCount += 1; continue; }
+    const merged = existing.concat([tag]);
+    try {
+      await apiPost("/set_tags", { path: p, root: rootId, tags: merged });
+      okCount += 1;
+    } catch (e) {
+      console.warn("[G-Workflows] assignTagToWorkflows failed for", p, e);
+    }
+  }
+  await refreshTree();
+  renderAll();
+  const summary = okCount
+    ? `Tagged ${okCount} workflow(s) with "${tag}"` + (alreadyCount ? ` (${alreadyCount} already had it)` : "")
+    : alreadyCount
+    ? `All ${alreadyCount} workflow(s) already had "${tag}"`
+    : `No workflows tagged`;
+  toast(summary);
 }
 
 function copyTagToClipboard(tag) {
@@ -811,10 +903,17 @@ const CSS = `
 .gt-split::after { content:""; position:absolute; left:50%; top:50%; width:30px; height:2px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
 .gt-split:hover::after { background:#3b82f6; }
 .gt-tagpane { flex:1; overflow:auto; padding:6px 4px; min-height:80px; background:#1d2128; }
-.gt-tagpane .gt-tphead { font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.55; padding:4px 6px 6px; }
+.gt-tagpane .gt-tphead { display:flex; align-items:center; gap:6px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; padding:4px 6px 6px; }
+.gt-tagpane .gt-tphead .lab { flex:1; opacity:.55; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-tagpane .gt-tphead .btn { background:transparent; border:1px solid #3a414e; color:#dbe2ea; padding:0 6px 1px; border-radius:3px; font:bold 13px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
+.gt-tagpane .gt-tphead .btn:hover { background:#2b313a; border-color:#3b82f6; }
+.gt-tagpane .gt-tphead .btn[disabled] { opacity:.3; cursor:not-allowed; }
+.gt-tagpane .gt-tphead .btn[disabled]:hover { background:transparent; border-color:#3a414e; }
 .gt-tagpane .gt-tprow { display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:4px; cursor:pointer; user-select:none; }
 .gt-tagpane .gt-tprow:hover { background:#2b313a; }
 .gt-tagpane .gt-tprow.active { background:#3b82f6; color:#fff; }
+.gt-tagpane .gt-tprow.draft .name { font-style:italic; opacity:.85; }
+.gt-tagpane .gt-tprow.drop-target { outline:2px dashed #3b82f6; outline-offset:-2px; background:#1f2733; }
 .gt-tagpane .gt-tprow .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .gt-tagpane .gt-tprow .count { opacity:.55; font-size:11px; }
 .gt-tagpane .gt-tpempty { padding:8px 6px; font-size:11px; opacity:.55; font-style:italic; }
@@ -856,11 +955,11 @@ const CSS = `
 .gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-empty { padding:16px; opacity:.6; text-align:center; }
-.gt-tag-notice { display:flex; align-items:center; gap:8px; padding:6px 10px; background:#1f2733; border-bottom:1px solid #2a3142; font-size:12px; color:#c8d2dd; }
+.gt-tag-notice { display:flex; align-items:center; gap:6px; padding:2px 8px; font-size:11px; color:#9aa6b2; }
+.gt-tag-notice .clear { cursor:pointer; opacity:.7; padding:0 2px; user-select:none; }
+.gt-tag-notice .clear:hover { opacity:1; color:#dbe2ea; }
 .gt-tag-notice .label { color:#9aa6b2; }
 .gt-tag-notice .name  { font-weight:600; color:#3b82f6; }
-.gt-tag-notice .clear { margin-left:auto; cursor:pointer; opacity:.6; padding:2px 6px; border-radius:4px; }
-.gt-tag-notice .clear:hover { opacity:1; background:#2b313a; }
 .gt-grid.gt-aslist { display:block; }
 .gt-lhead, .gt-row { display:grid; grid-template-columns:var(--gt-lcols, 220px 170px 300px 200px 260px 90px); gap:10px; align-items:center; padding:6px 8px; }
 .gt-grid.gt-aslist .gt-lhead, .gt-grid.gt-aslist .gt-row { min-width:var(--gt-lminw, 1240px); box-sizing:border-box; }
@@ -1754,19 +1853,54 @@ function renderTagPane() {
   if (!host) return;
   while (host.firstChild) host.removeChild(host.firstChild);
   const counts = aggregateAllTags();
+  // Drop any drafts that became real (a workflow now carries them).
+  for (const dt of Array.from(state.draftTags)) {
+    if (counts.has(dt)) state.draftTags.delete(dt);
+  }
+  const totalTags = counts.size + state.draftTags.size;
+
+  // Header: label + "+" (add empty tag) + "−" (delete active tag).
   const head = el("div", { class: "gt-tphead" });
-  head.textContent = counts.size
-    ? `Tags · ${counts.size} in use`
-    : "Tags";
+  const lab  = el("span", { class: "lab", text: totalTags ? `Tags · ${totalTags} in use` : "Tags" });
+  head.appendChild(lab);
+  const addBtn = el("button", { class: "btn", text: "+", attrs: { title: "Add a new empty tag (drag workflows onto it to assign)" } });
+  addBtn.addEventListener("click", (e) => { e.stopPropagation(); addEmptyTag(); });
+  head.appendChild(addBtn);
+  const delBtn = el("button", { class: "btn", text: "−", attrs: { title: "Delete the active tag from every workflow that has it" } });
+  if (!state.tagFilter) delBtn.setAttribute("disabled", "true");
+  delBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!state.tagFilter) return;
+    const t = state.tagFilter;
+    if (state.draftTags.has(t) && !counts.has(t)) {
+      // Draft (count 0) — just remove from the in-memory list, no backend call.
+      state.draftTags.delete(t);
+      state.tagFilter = null;
+      saveLS();
+      renderAll();
+      toast(`Removed draft tag "${t}"`);
+    } else {
+      deleteTagGlobal(t);
+    }
+  });
+  head.appendChild(delBtn);
   host.appendChild(head);
-  if (!counts.size) {
+
+  if (!totalTags) {
     host.appendChild(el("div", { class: "gt-tpempty", text: "(no tags yet)" }));
     return;
   }
-  const entries = Array.from(counts.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]));
-  for (const [tag, n] of entries) {
-    const row = el("div", { class: "gt-tprow" + (state.tagFilter === tag ? " active" : "") });
+
+  // Merge real + draft, alphabetize.
+  const allKeys = new Set([...counts.keys(), ...state.draftTags]);
+  const entries = Array.from(allKeys).sort((a, b) => a.localeCompare(b));
+  for (const tag of entries) {
+    const n = counts.get(tag) || 0;
+    const isDraft = n === 0 && state.draftTags.has(tag);
+    const classes = "gt-tprow"
+      + (state.tagFilter === tag ? " active" : "")
+      + (isDraft ? " draft" : "");
+    const row = el("div", { class: classes });
     row.appendChild(el("span", { class: "name", text: tag }));
     row.appendChild(el("span", { class: "count", text: String(n) }));
     row.addEventListener("click", () => {
@@ -1777,11 +1911,33 @@ function renderTagPane() {
       e.preventDefault(); e.stopPropagation();
       showMenu(e.clientX, e.clientY, [
         { label: "Rename…", action: () => renameTagGlobal(tag) },
-        { label: "Copy tag", action: () => copyTagToClipboard(tag) },
+        { label: "Copy tag", disabled: isDraft, action: () => copyTagToClipboard(tag) },
         { label: "Paste tag", disabled: !state.tagClipboard || !state.tagClipboard.length, action: () => pasteTagsOntoSelection() },
         "sep",
         { label: "Delete", danger: true, action: () => deleteTagGlobal(tag) },
       ]);
+    });
+    // Drop target: dragging selected workflows onto this row applies the tag.
+    row.addEventListener("dragover", (e) => {
+      const types = e.dataTransfer && e.dataTransfer.types;
+      if (!types) return;
+      // DataTransferItemList has .contains; DOMStringList has .contains too.
+      // Array.from to normalize.
+      if (Array.from(types).indexOf("application/x-gw-workflows") < 0) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      row.classList.add("drop-target");
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+    row.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      row.classList.remove("drop-target");
+      const payload = e.dataTransfer.getData("application/x-gw-workflows");
+      if (!payload) return;
+      let paths;
+      try { paths = JSON.parse(payload); } catch { return; }
+      if (!Array.isArray(paths) || !paths.length) return;
+      await assignTagToWorkflows(tag, paths);
     });
     host.appendChild(row);
   }
@@ -2042,14 +2198,15 @@ function renderGrid() {
     files = files.filter((f) =>
       baseName(f.path).replace(/\.json$/i, "").toLowerCase().indexOf(ql) >= 0);
   }
-  // Notice strip (only in tag-filter mode).
+  // Notice strip (only in tag-filter mode). Compact one-liner: ✕ on the left,
+  // then "clear", then "Tag:", then the active tag name in blue.
   if (state.tagFilter) {
     const notice = el("div", { class: "gt-tag-notice" });
-    notice.appendChild(el("span", { class: "label", text: "Tag:" }));
-    notice.appendChild(el("span", { class: "name", text: state.tagFilter }));
     const x = el("span", { class: "clear", text: "✕ clear", attrs: { title: "Clear tag filter" } });
     x.addEventListener("click", () => { state.tagFilter = null; renderAll(); });
     notice.appendChild(x);
+    notice.appendChild(el("span", { class: "label", text: "Tag:" }));
+    notice.appendChild(el("span", { class: "name", text: state.tagFilter }));
     gridEl.appendChild(notice);
   }
   if (!files.length) {
@@ -2125,6 +2282,20 @@ function wireFileEl(elm, f) {
   if (state.loadedRootId === fRoot && state.loadedSourcePath === f.path) elm.classList.add("loaded");
   if (state.clipboard && state.clipboard.op === "cut" && state.clipboard.root === fRoot
       && state.clipboard.items.includes(f.path)) elm.classList.add("cut");
+  // Drag source: cards + rows can be dragged onto a tag-pane row to assign.
+  // If this file is part of the current selection, the drag carries the whole
+  // selection; otherwise just this one. Custom MIME so the tag-pane drop
+  // target can recognise it and image-thumbnail drops (from outside) stay
+  // a separate, unambiguous code path.
+  elm.setAttribute("draggable", "true");
+  elm.addEventListener("dragstart", (e) => {
+    if (!e.dataTransfer) return;
+    const paths = state.selection.has(f.path)
+      ? Array.from(state.selection)
+      : [f.path];
+    try { e.dataTransfer.setData("application/x-gw-workflows", JSON.stringify(paths)); } catch (_) {}
+    e.dataTransfer.effectAllowed = "copy";
+  });
   let clickTimer = null;
   elm.addEventListener("click", (e) => {
     focusFileContext(f);   // cross-root search hit → point state at its location
@@ -2199,7 +2370,14 @@ function wireFileEl(elm, f) {
       { label: `Delete${sel.length > 1 ? ` (${sel.length})` : ""}`, danger: true, action: () => deleteFiles(sel) },
     ]);
   });
-  elm.addEventListener("dragover", (e) => { e.preventDefault(); elm.classList.add("drop-target"); });
+  elm.addEventListener("dragover", (e) => {
+    // Don't flash the thumbnail drop-target highlight when the drag is an
+    // internal workflow-drag (those are bound for the tag pane).
+    const types = e.dataTransfer && e.dataTransfer.types;
+    if (types && Array.from(types).indexOf("application/x-gw-workflows") >= 0) return;
+    e.preventDefault();
+    elm.classList.add("drop-target");
+  });
   elm.addEventListener("dragleave", () => elm.classList.remove("drop-target"));
   elm.addEventListener("drop", async (e) => {
     e.preventDefault(); e.stopPropagation(); elm.classList.remove("drop-target");
