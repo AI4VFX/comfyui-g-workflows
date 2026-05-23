@@ -709,6 +709,31 @@ try:
         except Exception as e:
             return _bad(str(e), 500)
 
+    @PromptServer.instance.routes.post("/comfy_greg_templates/set_tags")
+    async def route_set_tags(request):
+        """Body: {path: '...json', tags: ['flux','character'], root?: 'default'}.
+
+        Overwrites the workflow's .tags.txt sidecar with the normalized list.
+        Empty / missing list deletes the sidecar.
+        """
+        try:
+            data = await request.json()
+            rel = data.get("path", "")
+            tags_in = data.get("tags") or []
+            if not isinstance(tags_in, list):
+                return _bad("'tags' must be a list of strings")
+            if not rel.lower().endswith(WORKFLOW_EXT):
+                return _bad("path must end with .json")
+            abs_path = _resolve(rel, _root_of(data))
+            if not os.path.isfile(abs_path):
+                return _bad("workflow not found", 404)
+            _write_tags(abs_path, tags_in)
+            return _ok({"path": rel, "tags": _read_tags(abs_path)})
+        except web.HTTPException:
+            raise
+        except Exception as e:
+            return _bad(str(e), 500)
+
     @PromptServer.instance.routes.post("/comfy_greg_templates/set_fav")
     async def route_set_fav(request):
         """Body: {path: '...json', favorite: bool}.  Marker = <stem>.fav."""
