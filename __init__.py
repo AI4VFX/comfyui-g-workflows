@@ -780,6 +780,40 @@ try:
                     affected += 1
         return web.json_response({"success": True, "affected": affected})
 
+    @PromptServer.instance.routes.post("/comfy_greg_templates/delete_tag")
+    async def delete_tag(request):
+        """Body: {from: 'tag-name'}.
+
+        Globally removes the tag from every workflow in every registered root.
+        Workflow files themselves are NEVER touched. If a sidecar's tag list
+        becomes empty, the sidecar file is deleted.
+        Returns: {success, affected: N}.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return _bad("invalid JSON body")
+        src = (body.get("from") or "").strip().lower()
+        if not src:
+            return _bad("'from' is required")
+        affected = 0
+        for r in _ROOTS.values():
+            base = r.get("abspath")
+            if not base or not os.path.isdir(base):
+                continue
+            for dirpath, _dirs, names in os.walk(base):
+                for name in names:
+                    if not name.lower().endswith(TAGS_EXT):
+                        continue
+                    sidecar = os.path.join(dirpath, name)
+                    wf = sidecar[: -len(TAGS_EXT)] + WORKFLOW_EXT
+                    tags = _read_tags(wf)
+                    if src not in tags:
+                        continue
+                    _write_tags(wf, [t for t in tags if t != src])
+                    affected += 1
+        return web.json_response({"success": True, "affected": affected})
+
     @PromptServer.instance.routes.post("/comfy_greg_templates/set_fav")
     async def route_set_fav(request):
         """Body: {path: '...json', favorite: bool}.  Marker = <stem>.fav."""
