@@ -799,6 +799,10 @@ try:
             if os.path.isfile(src_fav):
                 os.rename(src_fav, dst_stem + FAV_EXT)
                 moved_sidecars.append(_rel(dst_stem + FAV_EXT, base))
+            src_tags = src_stem + TAGS_EXT
+            if os.path.isfile(src_tags):
+                os.rename(src_tags, dst_stem + TAGS_EXT)
+                moved_sidecars.append(_rel(dst_stem + TAGS_EXT, base))
             return _ok({
                 "from": src_rel,
                 "to": _rel(dst, base),
@@ -846,6 +850,10 @@ try:
             if os.path.isfile(src_fav):
                 shutil.copy2(src_fav, dst_stem + FAV_EXT)
                 copied_sidecars.append(_rel(dst_stem + FAV_EXT, base))
+            src_tags = src_stem + TAGS_EXT
+            if os.path.isfile(src_tags):
+                shutil.copy2(src_tags, dst_stem + TAGS_EXT)
+                copied_sidecars.append(_rel(dst_stem + TAGS_EXT, base))
             return _ok({
                 "from": src_rel,
                 "to": _rel(dst, base),
@@ -953,6 +961,13 @@ try:
                         try:
                             os.remove(fav_abs)
                             removed_here.append(_rel(fav_abs, base))
+                        except OSError:
+                            pass
+                    tags_abs = _tags_path(abs_path)
+                    if tags_abs and os.path.isfile(tags_abs):
+                        try:
+                            os.remove(tags_abs)
+                            removed_here.append(_rel(tags_abs, base))
                         except OSError:
                             pass
                     deleted.extend(removed_here)
