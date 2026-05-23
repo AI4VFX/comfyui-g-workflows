@@ -40,7 +40,7 @@ const state = {
   loadingFromGW: false,     // guards loadGraphData wrapper
   root: "",                   // legacy: current root's abspath (list-view Path col)
   panelMounted: false,
-  cardScale: 1,               // workflow card zoom (0.25–2.5)
+  cardScale: 1.5,             // workflow card zoom (1.0–2.5; also scales List-view font)
   recurseSubfolders: false,   // grid shows currentPath + all descendant workflows flattened
   listView: false,            // grid renders as a details-style list (Name/Date/Desc/Path/Size)
   listColW: [220, 170, 300, 200, 260, 90],   // px widths: Name,Date,Desc,Tags,Path,Size (resizable)
@@ -76,7 +76,7 @@ function loadLS() {
     }
     state.expanded.add(ekey("default", ""));
     state.expanded.add(ekey(state.rootId, ""));
-    if (typeof parsed.cardScale === "number") state.cardScale = Math.min(2.5, Math.max(0.25, parsed.cardScale));
+    if (typeof parsed.cardScale === "number") state.cardScale = Math.min(2.5, Math.max(1, parsed.cardScale));
     if (typeof parsed.recurseSubfolders === "boolean") state.recurseSubfolders = parsed.recurseSubfolders;
     if (typeof parsed.listView === "boolean") state.listView = parsed.listView;
     if (typeof parsed.favoritesOnly === "boolean") state.favoritesOnly = parsed.favoritesOnly;
@@ -1786,14 +1786,14 @@ function buildPanel(host) {
   // Lower-right icon-size slider (0.25×–2.5×). Built once here so renderAll,
   // which only repopulates toolbar/tree/grid, never wipes it.
   zoomLabel  = el("span", { class: "pct" });
-  zoomSlider = el("input", { attrs: { type: "range", min: "0.25", max: "2.5", step: "0.05" } });
+  zoomSlider = el("input", { attrs: { type: "range", min: "1", max: "2.5", step: "0.05" } });
   zoomSlider.value = state.cardScale;
   zoomSlider.addEventListener("input", () => {
     state.cardScale = parseFloat(zoomSlider.value);
     applyCardScale(); applyListFont(); saveLS();
   });
   zoomSlider.addEventListener("dblclick", () => {
-    state.cardScale = 1; zoomSlider.value = 1;
+    state.cardScale = 1.5; zoomSlider.value = 1.5;
     applyCardScale(); applyListFont(); saveLS();
   });
   const zoom = el("div", { class: "gt-zoom" }, el("span", {}, "Size"), zoomSlider, zoomLabel);
