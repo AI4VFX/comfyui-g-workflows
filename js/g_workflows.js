@@ -623,6 +623,23 @@ function collectFilesRecursive(node) {
   return out;
 }
 
+// Aggregate (lowercased tag -> count) across every registered root.
+// Cheap; tag lists are tiny. Used by the tag pane (Task 12) and by
+// the tag-editor autocomplete dropdown.
+function aggregateAllTags() {
+  const counts = new Map();
+  for (const r of state.roots) {
+    if (!r || !r.tree) continue;
+    for (const f of collectFilesRecursive(r.tree)) {
+      for (const t of (f.tags || [])) {
+        const s = String(t).toLowerCase();
+        counts.set(s, (counts.get(s) || 0) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
 function rootDisplayLabel(r) {
   return r.id === "default" ? "workflows" : (r.label || r.abspath || r.id);
 }
@@ -753,11 +770,16 @@ const CSS = `
 .gt-modal pre { white-space:pre-wrap; word-break:break-all; background:#13161a; padding:8px; border-radius:4px; max-height:200px; overflow:auto; font-size:11px; }
 .gt-modal input[type=text] { width:100%; background:#13161a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 8px; font-size:13px; }
 .gt-modal textarea { width:100%; box-sizing:border-box; min-height:120px; resize:vertical; background:#13161a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 8px; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-.gt-modal .gt-chip-wrap { display:flex; flex-wrap:wrap; gap:6px; padding:6px 8px; background:#13161a; border:1px solid #3a414e; border-radius:4px; min-height:42px; align-items:flex-start; }
+.gt-modal .gt-chip-wrap { position:relative; display:flex; flex-wrap:wrap; gap:6px; padding:6px 8px; background:#13161a; border:1px solid #3a414e; border-radius:4px; min-height:42px; align-items:flex-start; }
 .gt-modal .gt-tagchip { display:inline-flex; align-items:center; gap:4px; background:#2b313a; border:1px solid #3a414e; border-radius:12px; padding:2px 8px 2px 10px; font-size:12px; color:#dbe2ea; }
 .gt-modal .gt-tagchip .x { cursor:pointer; opacity:.6; font-size:14px; line-height:1; padding:0 2px; }
 .gt-modal .gt-tagchip .x:hover { opacity:1; color:#fca5a5; }
 .gt-modal .gt-chip-input { flex:1; min-width:120px; background:transparent; color:#dbe2ea; border:none; outline:none; padding:2px 4px; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+.gt-modal .gt-ac { position:absolute; left:0; right:0; top:100%; background:#1d2128; border:1px solid #3a414e; border-radius:4px; max-height:180px; overflow:auto; z-index:2; box-shadow:0 6px 24px rgba(0,0,0,.45); display:none; }
+.gt-modal .gt-ac.visible { display:block; }
+.gt-modal .gt-ac .gt-ac-row { padding:5px 10px; cursor:pointer; font-size:12px; display:flex; justify-content:space-between; align-items:center; }
+.gt-modal .gt-ac .gt-ac-row:hover, .gt-modal .gt-ac .gt-ac-row.active { background:#3b82f6; color:#fff; }
+.gt-modal .gt-ac .gt-ac-row .cnt { opacity:.6; font-size:11px; margin-left:8px; }
 .gt-modal .row { display:flex; gap:8px; padding:10px 16px; justify-content:flex-end; border-top:1px solid #303540; }
 .gt-modal .row button { background:#2b313a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 14px; cursor:pointer; }
 .gt-modal .row button.primary { background:#3b82f6; border-color:#3b82f6; color:#fff; }
@@ -975,27 +997,82 @@ async function tagsModal(title, currentTags) {
   wrap.appendChild(input);
   wrap.addEventListener("click", () => input.focus());
 
+  // Autocomplete dropdown — sourced from the live tag aggregation,
+  // minus tags already chipped in this editor session.
+  const ac = el("div", { class: "gt-ac" });
+  wrap.appendChild(ac);
+  const allCounts = aggregateAllTags();
+  let acRows = [];
+  let acIndex = -1;
+  function renderAc() {
+    while (ac.firstChild) ac.removeChild(ac.firstChild);
+    acRows = [];
+    const q = input.value.trim().toLowerCase();
+    if (!q) { ac.classList.remove("visible"); acIndex = -1; return; }
+    let matches = [];
+    for (const [tag, count] of allCounts.entries()) {
+      if (seen.has(tag)) continue;
+      if (tag.indexOf(q) < 0) continue;
+      matches.push([tag, count]);
+    }
+    matches.sort((a, b) => a[0].localeCompare(b[0]));
+    matches = matches.slice(0, 12);
+    if (!matches.length) { ac.classList.remove("visible"); acIndex = -1; return; }
+    for (const [tag, count] of matches) {
+      const row = el("div", { class: "gt-ac-row" });
+      row.appendChild(el("span", { text: tag }));
+      row.appendChild(el("span", { class: "cnt", text: String(count) }));
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); addTag(tag); input.value = ""; renderAc(); input.focus(); });
+      ac.appendChild(row);
+      acRows.push(row);
+    }
+    acIndex = 0;
+    acRows[0].classList.add("active");
+    ac.classList.add("visible");
+  }
+  function moveAc(delta) {
+    if (!acRows.length) return;
+    acRows[acIndex].classList.remove("active");
+    acIndex = (acIndex + delta + acRows.length) % acRows.length;
+    acRows[acIndex].classList.add("active");
+    acRows[acIndex].scrollIntoView({ block: "nearest" });
+  }
+  input.addEventListener("input", renderAc);
+  input.addEventListener("blur", () => { setTimeout(() => ac.classList.remove("visible"), 100); });
+
   body.appendChild(labelRow);
   body.appendChild(wrap);
 
   input.addEventListener("keydown", (e) => {
+    const acVisible = ac.classList.contains("visible");
+    if (acVisible && e.key === "ArrowDown") { e.preventDefault(); moveAc(1); return; }
+    if (acVisible && e.key === "ArrowUp")   { e.preventDefault(); moveAc(-1); return; }
+    if (acVisible && e.key === "Escape")    { e.preventDefault(); ac.classList.remove("visible"); return; }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      // Ctrl+Enter saves
       e.preventDefault(); e.stopPropagation();
-      // Commit any in-progress text first
       if (input.value.trim()) { addTag(input.value); input.value = ""; }
       const p = row.querySelector("button.primary");
       if (p) p.click();
       return;
     }
-    if (e.key === "Enter" || e.key === ",") {
+    if (e.key === "Enter") {
       e.preventDefault();
-      if (input.value.trim()) { addTag(input.value); input.value = ""; }
+      if (acVisible && acIndex >= 0) {
+        const text = acRows[acIndex].firstChild.textContent;
+        addTag(text); input.value = ""; renderAc(); return;
+      }
+      if (input.value.trim()) { addTag(input.value); input.value = ""; renderAc(); }
+      return;
+    }
+    if (e.key === ",") {
+      e.preventDefault();
+      if (input.value.trim()) { addTag(input.value); input.value = ""; renderAc(); }
       return;
     }
     if (e.key === "Backspace" && input.value === "" && tags.length) {
       e.preventDefault();
       removeTag(tags[tags.length - 1]);
+      renderAc();
     }
   });
 
