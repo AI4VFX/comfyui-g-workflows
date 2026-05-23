@@ -50,6 +50,7 @@ const state = {
   searchQuery: "",            // ephemeral filename filter, narrows the current view (NOT persisted)
   searchGlobal: false,        // Search-box Global toggle: when on, search ignores
                               // current folder/root selection and scans ALL roots
+  descModalH: null,           // user-set height (px) of the Description editor textarea
   splitPos: 0.6,              // folder-tree ratio of sidebar height (drag splitter; persisted)
   tagPaneEl: null,            // captured at panel construction (used by renderTagPane in Task 12)
   tagFilter: null,            // null = no filter; lowercase string = active tag (Task 13)
@@ -107,6 +108,9 @@ function loadLS() {
     }
     if (typeof parsed.splitPos === "number" && parsed.splitPos > 0.1 && parsed.splitPos < 0.9) state.splitPos = parsed.splitPos;
     if (typeof parsed.searchGlobal === "boolean") state.searchGlobal = parsed.searchGlobal;
+    if (typeof parsed.descModalH === "number" && parsed.descModalH >= 60 && parsed.descModalH <= 4000) {
+      state.descModalH = Math.round(parsed.descModalH);
+    }
     if (Array.isArray(parsed.draftTags)) {
       state.draftTags = new Set(parsed.draftTags.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim().toLowerCase()));
     }
@@ -137,6 +141,7 @@ function saveLS() {
       cardSort: state.cardSort,
       splitPos: state.splitPos,
       searchGlobal: state.searchGlobal,
+      descModalH: state.descModalH,
       draftTags: Array.from(state.draftTags),
       tagSort: state.tagSort,
       tagOrder: state.tagOrder,
@@ -1245,8 +1250,26 @@ async function descModal(title, current) {
   labelRow.textContent = "Description (leave empty to clear) — Ctrl+Enter to save:";
   const ta = el("textarea", { attrs: { rows: "6" } });
   ta.value = current || "";
+  // Restore the last user-set height (textarea has resize:vertical so the
+  // user can drag the bottom-right corner). On every resize, save the new
+  // height to localStorage so it persists across sessions.
+  if (typeof state.descModalH === "number" && state.descModalH > 0) {
+    ta.style.height = state.descModalH + "px";
+  }
   body.appendChild(labelRow);
   body.appendChild(ta);
+  let ro = null;
+  try {
+    ro = new ResizeObserver(() => {
+      const h = ta.getBoundingClientRect().height;
+      if (h <= 0) return;
+      const rounded = Math.round(h);
+      if (rounded === state.descModalH) return;
+      state.descModalH = rounded;
+      saveLS();
+    });
+    ro.observe(ta);
+  } catch (_) { /* ResizeObserver unavailable — feature simply doesn't persist */ }
   const cancel = el("button"); cancel.textContent = "Cancel";
   const ok     = el("button", { class: "primary" }); ok.textContent = "Save";
   row.appendChild(cancel); row.appendChild(ok);
@@ -1255,10 +1278,12 @@ async function descModal(title, current) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); ok.click(); }
     else if (e.key === "Enter") { e.stopPropagation(); } // newline, don't submit
   });
-  return modalPromise(bg, row, (close) => {
+  const result = await modalPromise(bg, row, (close) => {
     cancel.addEventListener("click", () => close(null));
     ok.addEventListener("click",     () => close(ta.value));
   });
+  if (ro) { try { ro.disconnect(); } catch (_) {} }
+  return result;
 }
 
 // v0 of the tags editor: a textarea, one tag per line. Tasks 7-8 replace
