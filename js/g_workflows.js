@@ -758,6 +758,11 @@ const CSS = `
 .gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-empty { padding:16px; opacity:.6; text-align:center; }
+.gt-tag-notice { display:flex; align-items:center; gap:8px; padding:6px 10px; background:#1f2733; border-bottom:1px solid #2a3142; font-size:12px; color:#c8d2dd; }
+.gt-tag-notice .label { color:#9aa6b2; }
+.gt-tag-notice .name  { font-weight:600; color:#3b82f6; }
+.gt-tag-notice .clear { margin-left:auto; cursor:pointer; opacity:.6; padding:2px 6px; border-radius:4px; }
+.gt-tag-notice .clear:hover { opacity:1; background:#2b313a; }
 .gt-grid.gt-aslist { display:block; }
 .gt-lhead, .gt-row { display:grid; grid-template-columns:var(--gt-lcols, 220px 170px 300px 200px 260px 90px); gap:10px; align-items:center; padding:6px 8px; }
 .gt-grid.gt-aslist .gt-lhead, .gt-grid.gt-aslist .gt-row { min-width:var(--gt-lminw, 1240px); box-sizing:border-box; }
@@ -1743,6 +1748,7 @@ function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
 }
 
 function selectFolder(rootId, path) {
+  if (state.tagFilter) { state.tagFilter = null; /* fall through to normal folder switch */ }
   state.rootId = rootId;
   state.currentPath = path;
   state.selection.clear();
@@ -1894,33 +1900,58 @@ function renderGrid() {
   const q = (state.searchQuery || "").trim();
   const searching = q.length > 0;
   const r0 = currentRoot();
-  if (r0 && r0.available === false) {
+  if (!state.tagFilter && r0 && r0.available === false) {
     gridEl.appendChild(el("div", { class: "gt-empty",
       text: "This location is offline or was removed. Reconnect the drive/folder and click Refresh." }));
     return;
   }
-  // Compute the panel's normal visible-file set first (current root +
-  // current folder ± Subfolders toggle ± Favorites filter), THEN apply
-  // search as a pure filename-substring filter on top. Search no longer
-  // bypasses the current scope and goes cross-root — it just narrows
-  // whatever you're already looking at.
-  const node = findFolderNode(state.rootId, state.currentPath);
-  let files = node ? (state.recurseSubfolders ? collectFilesRecursive(node) : (node.files || [])) : [];
+  // Compute the visible file set:
+  //  - Tag-filter mode: flat across every root, only files with the active tag.
+  //  - Otherwise: current root + current folder ± Subfolders toggle.
+  // Then layer Favorites filter, then Search.
+  let files;
+  if (state.tagFilter) {
+    files = [];
+    for (const r of state.roots) {
+      if (!r || !r.tree) continue;
+      const label = (typeof rootDisplayLabel === "function") ? rootDisplayLabel(r) : (r.label || r.id);
+      for (const f of collectFilesRecursive(r.tree)) {
+        if ((f.tags || []).indexOf(state.tagFilter) >= 0) {
+          files.push(Object.assign({}, f, { __root: r.id, __rootLabel: label }));
+        }
+      }
+    }
+  } else {
+    const node = findFolderNode(state.rootId, state.currentPath);
+    files = node ? (state.recurseSubfolders ? collectFilesRecursive(node) : (node.files || [])) : [];
+  }
   if (state.favoritesOnly) files = files.filter((f) => f.favorite);
   if (searching) {
     const ql = q.toLowerCase();
     files = files.filter((f) =>
       baseName(f.path).replace(/\.json$/i, "").toLowerCase().indexOf(ql) >= 0);
   }
+  // Notice strip (only in tag-filter mode).
+  if (state.tagFilter) {
+    const notice = el("div", { class: "gt-tag-notice" });
+    notice.appendChild(el("span", { class: "label", text: "Tag:" }));
+    notice.appendChild(el("span", { class: "name", text: state.tagFilter }));
+    const x = el("span", { class: "clear", text: "✕ clear", attrs: { title: "Clear tag filter" } });
+    x.addEventListener("click", () => { state.tagFilter = null; renderAll(); });
+    notice.appendChild(x);
+    gridEl.appendChild(notice);
+  }
   if (!files.length) {
-    const empty = el("div", { class: "gt-empty" });
-    empty.textContent = searching
+    const empty = el(“div”, { class: “gt-empty” });
+    empty.textContent = state.tagFilter
+      ? `No workflows tagged “${state.tagFilter}”.`
+      : searching
       ? `No workflows match “${q}”.`
       : state.favoritesOnly
-      ? "No favorites here. Click the ☆ on a workflow's thumbnail to add one."
+      ? “No favorites here. Click the ☆ on a workflow's thumbnail to add one.”
       : state.recurseSubfolders
-      ? "No workflows in this folder or any of its subfolders."
-      : "No workflows in this folder. Drag a .json here or click 'Save As…'.";
+      ? “No workflows in this folder or any of its subfolders.”
+      : “No workflows in this folder. Drag a .json here or click 'Save As…'.”;
     gridEl.appendChild(empty);
     return;
   }
