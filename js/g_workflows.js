@@ -1017,11 +1017,11 @@ const CSS = `
 .gt-card > .gt-fav { position:absolute; bottom:6px; right:6px; width:calc(39px * var(--gt-fav-scale,1)); height:calc(39px * var(--gt-fav-scale,1)); font-size:calc(27px * var(--gt-fav-scale,1)); z-index:2; }
 .gt-row .col-name { display:flex; align-items:center; gap:5px; overflow:visible; }
 .gt-row .col-name .gt-rowname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.gt-card .meta { padding:6px calc(39px * var(--gt-fav-scale,1) + 14px) 6px 8px; }
+.gt-card .meta { padding:6px calc(39px * var(--gt-fav-scale,1) + 14px) 6px 8px; display:flex; flex-direction:column; flex:1; }
 .gt-card .name { font-size:12px; word-break:break-word; }
 .gt-card .date { font-size:12px; opacity:.55; margin-top:2px; }
 .gt-card .desc { font-size:12px; color:#ffe14d; opacity:1; margin-top:3px; line-height:1.3; min-height:2.6em; max-height:2.6em; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
-.gt-card .tags { margin-top:6px; display:flex; flex-wrap:nowrap; overflow:hidden; gap:4px; min-height:18px; }
+.gt-card .tags { margin-top:auto; padding-top:6px; display:flex; flex-wrap:nowrap; overflow:hidden; gap:4px; min-height:18px; }
 .gt-card .tags .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:10px; cursor:pointer; white-space:nowrap; flex-shrink:0; user-select:none; }
 .gt-card .tags .pill:hover { background:#353c47; }
 .gt-card .tags .pill.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
