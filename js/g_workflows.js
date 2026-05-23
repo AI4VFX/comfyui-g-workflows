@@ -54,6 +54,9 @@ const state = {
   tagClipboard: [],           // shared one-buffer tag clipboard (Task 18)
   draftTags: new Set(),       // tag names with 0 workflow assignments; created via the + button
                               // in the tag pane and consumed via drag-drop or paste
+  tagSort: "default",         // tag pane sort: "default" (user order) | "asc" | "desc"
+  tagOrder: [],               // ordered tag names when tagSort === "default";
+                              // new tags appended, drag-drop reorder rewrites this
 };
 
 function loadLS() {
@@ -104,6 +107,16 @@ function loadLS() {
     if (Array.isArray(parsed.draftTags)) {
       state.draftTags = new Set(parsed.draftTags.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim().toLowerCase()));
     }
+    if (parsed.tagSort === "default" || parsed.tagSort === "asc" || parsed.tagSort === "desc") {
+      state.tagSort = parsed.tagSort;
+    }
+    if (Array.isArray(parsed.tagOrder)) {
+      const seen = new Set();
+      state.tagOrder = parsed.tagOrder
+        .filter((t) => typeof t === "string" && t.trim())
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => { if (seen.has(t)) return false; seen.add(t); return true; });
+    }
   } catch (_) {}
 }
 function saveLS() {
@@ -121,6 +134,8 @@ function saveLS() {
       cardSort: state.cardSort,
       splitPos: state.splitPos,
       draftTags: Array.from(state.draftTags),
+      tagSort: state.tagSort,
+      tagOrder: state.tagOrder,
     }));
   } catch (_) {}
 }
@@ -549,6 +564,62 @@ async function addEmptyTag() {
   toast(`Added draft tag "${name}". Drag workflows onto it to assign.`);
 }
 
+// Tag pane sort: cycles default → asc → desc → default. "Default" means
+// the user-defined order in state.tagOrder (drag-drop reorderable). Asc/desc
+// override that ordering for display only — state.tagOrder is preserved.
+function cycleTagSort() {
+  state.tagSort = state.tagSort === "default" ? "asc"
+                : state.tagSort === "asc"     ? "desc"
+                                              : "default";
+  saveLS();
+  renderAll();
+}
+
+// Move `srcTag` to occupy the position of `dstTag` in state.tagOrder.
+// Both must already be present; if either is missing, sortedTagKeys will
+// seed them on the next render and a follow-up reorder will succeed.
+// Insertion is BEFORE dstTag (so dropping A onto B places A above B).
+function reorderTags(srcTag, dstTag) {
+  if (srcTag === dstTag) return;
+  const order = state.tagOrder.slice();
+  const si = order.indexOf(srcTag);
+  if (si >= 0) order.splice(si, 1);
+  const di = order.indexOf(dstTag);
+  if (di < 0) order.push(srcTag);
+  else        order.splice(di, 0, srcTag);
+  state.tagOrder = order;
+  saveLS();
+  renderAll();
+}
+
+// Returns the tag names to render, in the order they should appear, given
+// the current sort mode + the live (real ∪ draft) set. Also seeds new tags
+// into state.tagOrder so default-mode order is stable across sessions.
+function sortedTagKeys(realCounts, draftSet) {
+  const allKeys = new Set([...realCounts.keys(), ...draftSet]);
+  if (state.tagSort === "asc") {
+    return Array.from(allKeys).sort((a, b) => a.localeCompare(b));
+  }
+  if (state.tagSort === "desc") {
+    return Array.from(allKeys).sort((a, b) => b.localeCompare(a));
+  }
+  // default: user-defined order first, then any newly-discovered tags
+  // appended in alphabetical order at the bottom.
+  const seen = new Set();
+  const out = [];
+  for (const t of state.tagOrder) {
+    if (allKeys.has(t) && !seen.has(t)) { seen.add(t); out.push(t); }
+  }
+  const remaining = Array.from(allKeys).filter((t) => !seen.has(t)).sort((a, b) => a.localeCompare(b));
+  for (const t of remaining) out.push(t);
+  // If anything was appended OR pruned, persist the canonical order.
+  if (remaining.length || out.length !== state.tagOrder.length) {
+    state.tagOrder = out.slice();
+    saveLS();
+  }
+  return out;
+}
+
 // Apply a tag to a set of workflows by merging into each one's existing
 // tag list (no destructive overwrite). Called from the tag-pane drop handler.
 async function assignTagToWorkflows(tag, workflowPaths) {
@@ -909,11 +980,15 @@ const CSS = `
 .gt-tagpane .gt-tphead .btn:hover { background:#2b313a; border-color:#3b82f6; }
 .gt-tagpane .gt-tphead .btn[disabled] { opacity:.3; cursor:not-allowed; }
 .gt-tagpane .gt-tphead .btn[disabled]:hover { background:transparent; border-color:#3a414e; }
+.gt-tagpane .gt-tphead .sortbtn { font:600 10px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; text-transform:uppercase; letter-spacing:.4px; padding:1px 6px; }
+.gt-tagpane .gt-tphead .sortbtn.on { background:#1f2733; border-color:#3b82f6; color:#3b82f6; }
 .gt-tagpane .gt-tprow { display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:4px; cursor:pointer; user-select:none; }
 .gt-tagpane .gt-tprow:hover { background:#2b313a; }
 .gt-tagpane .gt-tprow.active { background:#3b82f6; color:#fff; }
 .gt-tagpane .gt-tprow.draft .name { font-style:italic; opacity:.85; }
 .gt-tagpane .gt-tprow.drop-target { outline:2px dashed #3b82f6; outline-offset:-2px; background:#1f2733; }
+.gt-tagpane .gt-tprow.drop-target-tag { box-shadow:inset 0 2px 0 #3b82f6; }
+.gt-tagpane .gt-tprow.dragging { opacity:.4; }
 .gt-tagpane .gt-tprow .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .gt-tagpane .gt-tprow .count { opacity:.55; font-size:11px; }
 .gt-tagpane .gt-tpempty { padding:8px 6px; font-size:11px; opacity:.55; font-style:italic; }
@@ -1873,10 +1948,20 @@ function renderTagPane() {
   }
   const totalTags = counts.size + state.draftTags.size;
 
-  // Header: label + "+" (add empty tag) + "−" (delete active tag).
+  // Header: label + "Name" 3-state sort + "+" (add empty tag) + "−" (delete active).
   const head = el("div", { class: "gt-tphead" });
   const lab  = el("span", { class: "lab", text: totalTags ? `Tags · ${totalTags} in use` : "Tags" });
   head.appendChild(lab);
+  const sortLabel = state.tagSort === "asc"  ? "Name ▲"
+                  : state.tagSort === "desc" ? "Name ▼"
+                                             : "Name";
+  const sortBtn = el("button", {
+    class: "btn sortbtn" + (state.tagSort !== "default" ? " on" : ""),
+    text: sortLabel,
+    attrs: { title: "Sort: default (drag rows to reorder) → A to Z → Z to A → default" },
+  });
+  sortBtn.addEventListener("click", (e) => { e.stopPropagation(); cycleTagSort(); });
+  head.appendChild(sortBtn);
   const addBtn = el("button", { class: "btn", text: "+", attrs: { title: "Add a new empty tag (drag workflows onto it to assign)" } });
   addBtn.addEventListener("click", (e) => { e.stopPropagation(); addEmptyTag(); });
   head.appendChild(addBtn);
@@ -1905,10 +1990,9 @@ function renderTagPane() {
     return;
   }
 
-  // Merge real + draft, alphabetize.
-  const allKeys = new Set([...counts.keys(), ...state.draftTags]);
-  const entries = Array.from(allKeys).sort((a, b) => a.localeCompare(b));
-  for (const tag of entries) {
+  const orderedKeys = sortedTagKeys(counts, state.draftTags);
+  const canReorder = state.tagSort === "default";
+  for (const tag of orderedKeys) {
     const n = counts.get(tag) || 0;
     const isDraft = n === 0 && state.draftTags.has(tag);
     const classes = "gt-tprow"
@@ -1931,27 +2015,55 @@ function renderTagPane() {
         { label: "Delete", danger: true, action: () => deleteTagGlobal(tag) },
       ]);
     });
-    // Drop target: dragging selected workflows onto this row applies the tag.
+    // Drag SOURCE for tag reorder — only enabled in default sort mode.
+    if (canReorder) {
+      row.setAttribute("draggable", "true");
+      row.addEventListener("dragstart", (e) => {
+        if (!e.dataTransfer) return;
+        try { e.dataTransfer.setData("application/x-gw-tag", tag); } catch (_) {}
+        e.dataTransfer.effectAllowed = "move";
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => row.classList.remove("dragging"));
+    }
+    // Drop target: accepts workflow drags (assign tag) AND tag drags (reorder
+    // in default sort mode). Workflow drags win if both MIMEs are present
+    // (defensive — they shouldn't be).
     row.addEventListener("dragover", (e) => {
       const types = e.dataTransfer && e.dataTransfer.types;
       if (!types) return;
-      // DataTransferItemList has .contains; DOMStringList has .contains too.
-      // Array.from to normalize.
-      if (Array.from(types).indexOf("application/x-gw-workflows") < 0) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-      row.classList.add("drop-target");
+      const arr = Array.from(types);
+      if (arr.indexOf("application/x-gw-workflows") >= 0) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        row.classList.add("drop-target");
+        return;
+      }
+      if (arr.indexOf("application/x-gw-tag") >= 0 && canReorder) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        row.classList.add("drop-target-tag");
+      }
     });
-    row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drop-target");
+      row.classList.remove("drop-target-tag");
+    });
     row.addEventListener("drop", async (e) => {
       e.preventDefault();
       row.classList.remove("drop-target");
-      const payload = e.dataTransfer.getData("application/x-gw-workflows");
-      if (!payload) return;
-      let paths;
-      try { paths = JSON.parse(payload); } catch { return; }
-      if (!Array.isArray(paths) || !paths.length) return;
-      await assignTagToWorkflows(tag, paths);
+      row.classList.remove("drop-target-tag");
+      const wfPayload  = e.dataTransfer.getData("application/x-gw-workflows");
+      const tagPayload = e.dataTransfer.getData("application/x-gw-tag");
+      if (wfPayload) {
+        let paths;
+        try { paths = JSON.parse(wfPayload); } catch { return; }
+        if (Array.isArray(paths) && paths.length) await assignTagToWorkflows(tag, paths);
+        return;
+      }
+      if (tagPayload && canReorder && tagPayload !== tag) {
+        reorderTags(tagPayload, tag);
+      }
     });
     host.appendChild(row);
   }
