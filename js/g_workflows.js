@@ -1671,7 +1671,10 @@ function renderTagPane() {
     const row = el("div", { class: "gt-tprow" + (state.tagFilter === tag ? " active" : "") });
     row.appendChild(el("span", { class: "name", text: tag }));
     row.appendChild(el("span", { class: "count", text: String(n) }));
-    // No click handler yet (Task 14).
+    row.addEventListener("click", () => {
+      state.tagFilter = (state.tagFilter === tag) ? null : tag;
+      renderAll();
+    });
     host.appendChild(row);
   }
 }
@@ -2187,8 +2190,14 @@ function renderCard(f) {
     tags.title = "";
   } else {
     for (const t of tagList) {
-      const pill = el("span", { class: "pill", text: t });
+      const pill = el("span", { class: "pill" + (state.tagFilter === t ? " active" : ""), text: t });
       pill.title = t;
+      pill.addEventListener("click", (e) => {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) return;   // let modifiers fall through to card selection
+        e.stopPropagation();
+        state.tagFilter = (state.tagFilter === t) ? null : t;
+        renderAll();
+      });
       tags.appendChild(pill);
     }
     tags.title = tagList.join(", ");
