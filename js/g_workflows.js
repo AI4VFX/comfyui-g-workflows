@@ -753,6 +753,11 @@ const CSS = `
 .gt-modal pre { white-space:pre-wrap; word-break:break-all; background:#13161a; padding:8px; border-radius:4px; max-height:200px; overflow:auto; font-size:11px; }
 .gt-modal input[type=text] { width:100%; background:#13161a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 8px; font-size:13px; }
 .gt-modal textarea { width:100%; box-sizing:border-box; min-height:120px; resize:vertical; background:#13161a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 8px; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+.gt-modal .gt-chip-wrap { display:flex; flex-wrap:wrap; gap:6px; padding:6px 8px; background:#13161a; border:1px solid #3a414e; border-radius:4px; min-height:42px; align-items:flex-start; }
+.gt-modal .gt-tagchip { display:inline-flex; align-items:center; gap:4px; background:#2b313a; border:1px solid #3a414e; border-radius:12px; padding:2px 8px 2px 10px; font-size:12px; color:#dbe2ea; }
+.gt-modal .gt-tagchip .x { cursor:pointer; opacity:.6; font-size:14px; line-height:1; padding:0 2px; }
+.gt-modal .gt-tagchip .x:hover { opacity:1; color:#fca5a5; }
+.gt-modal .gt-chip-input { flex:1; min-width:120px; background:transparent; color:#dbe2ea; border:none; outline:none; padding:2px 4px; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
 .gt-modal .row { display:flex; gap:8px; padding:10px 16px; justify-content:flex-end; border-top:1px solid #303540; }
 .gt-modal .row button { background:#2b313a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 14px; cursor:pointer; }
 .gt-modal .row button.primary { background:#3b82f6; border-color:#3b82f6; color:#fff; }
@@ -932,32 +937,79 @@ async function descModal(title, current) {
 async function tagsModal(title, currentTags) {
   const { bg, body, row } = buildModalShell(title);
   const labelRow = el("div", { class: "label-row" });
-  labelRow.textContent = "One tag per line — saved lowercased & de-duplicated:";
-  const ta = el("textarea", { attrs: { rows: "8" } });
-  ta.value = (currentTags || []).join("\n");
+  labelRow.textContent = "Type a tag and press Enter or comma to add. Ctrl+Enter to save.";
+
+  const wrap  = el("div", { class: "gt-chip-wrap" });
+  const input = el("input", { class: "gt-chip-input", attrs: { type: "text", placeholder: "Add tag…" } });
+
+  // In-memory model: ordered, de-duped, lowercased.
+  const tags = [];
+  const seen = new Set();
+  const addTag = (raw) => {
+    const s = (raw || "").trim().toLowerCase();
+    if (!s || seen.has(s)) return false;
+    seen.add(s);
+    tags.push(s);
+    renderChips();
+    return true;
+  };
+  const removeTag = (s) => {
+    const i = tags.indexOf(s);
+    if (i >= 0) { tags.splice(i, 1); seen.delete(s); renderChips(); }
+  };
+  function renderChips() {
+    // Tear down + rebuild every chip; cheap because lists are tiny.
+    while (wrap.firstChild && wrap.firstChild !== input) wrap.removeChild(wrap.firstChild);
+    for (const t of tags) {
+      const chip = el("span", { class: "gt-tagchip" });
+      chip.appendChild(el("span", { text: t }));
+      const x = el("span", { class: "x", text: "×" });
+      x.title = "Remove";
+      x.addEventListener("click", (e) => { e.stopPropagation(); removeTag(t); input.focus(); });
+      chip.appendChild(x);
+      wrap.insertBefore(chip, input);
+    }
+  }
+  for (const t of (currentTags || [])) addTag(t);
+
+  wrap.appendChild(input);
+  wrap.addEventListener("click", () => input.focus());
+
   body.appendChild(labelRow);
-  body.appendChild(ta);
+  body.appendChild(wrap);
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      // Ctrl+Enter saves
+      e.preventDefault(); e.stopPropagation();
+      // Commit any in-progress text first
+      if (input.value.trim()) { addTag(input.value); input.value = ""; }
+      const p = row.querySelector("button.primary");
+      if (p) p.click();
+      return;
+    }
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      if (input.value.trim()) { addTag(input.value); input.value = ""; }
+      return;
+    }
+    if (e.key === "Backspace" && input.value === "" && tags.length) {
+      e.preventDefault();
+      removeTag(tags[tags.length - 1]);
+    }
+  });
+
   const cancel = el("button"); cancel.textContent = "Cancel";
   const ok     = el("button", { class: "primary" }); ok.textContent = "Save";
   row.appendChild(cancel); row.appendChild(ok);
-  setTimeout(() => { ta.focus(); ta.select(); }, 0);
-  ta.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); ok.click(); }
-    else if (e.key === "Enter") { e.stopPropagation(); } // newline, don't submit
-  });
+  setTimeout(() => { input.focus(); }, 0);
+
   return modalPromise(bg, row, (close) => {
     cancel.addEventListener("click", () => close(null));
     ok.addEventListener("click",     () => {
-      // Parse: split on lines, trim, lowercase, drop blanks, de-dupe (preserve order).
-      const seen = new Set();
-      const out  = [];
-      for (const line of (ta.value || "").split(/\r?\n/)) {
-        const s = line.trim().toLowerCase();
-        if (!s || seen.has(s)) continue;
-        seen.add(s);
-        out.push(s);
-      }
-      close(out);
+      // Commit any uncommitted text
+      if (input.value.trim()) { addTag(input.value); input.value = ""; }
+      close(tags.slice());
     });
   });
 }
