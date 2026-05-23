@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/GW-Main.png" alt="G-Workflows" width="100%">
+<img src="docs/01.GW_Menu-UI.png" alt="G-Workflows" width="100%">
 
 # G-Workflows
 
@@ -15,19 +15,20 @@
 
 ---
 
-G-Workflows opens in its own window from a 💾 button in the ComfyUI top bar and
-gives you a real file manager for your workflows: a thumbnail gallery, a
-details list, multi-location browsing, search, sorting, favorites,
-descriptions, drag-and-drop, and a Save button smart enough to recognize the
+G-Workflows opens in its own window from a 💾 button in the ComfyUI top bar
+and gives you a real file manager for your workflows: a thumbnail gallery, a
+details list, multi-location browsing, focused or global search, sorting,
+favorites, descriptions, **tags** with a dedicated pane and cross-root
+filtering, drag-and-drop, and a Save button smart enough to recognize the
 workflow you already have open.
 
 It reads and writes ComfyUI's **native `user/default/workflows/` folder** —
-the exact same files as the built-in Workflows sidebar. No second library, no
-hidden copies. Add as many extra folders from anywhere on your disk as you
-like, and they all behave the same.
+the exact same files as the built-in Workflows sidebar. No second library,
+no hidden copies. Add as many extra folders from anywhere on your disk as
+you like, and they all behave the same.
 
-> **No graph nodes.** This is a pure front-end/back-end UI extension — it adds
-> nothing to your node menu and changes nothing about how graphs run.
+> **No graph nodes.** This is a pure front-end/back-end UI extension — it
+> adds nothing to your node menu and changes nothing about how graphs run.
 
 ---
 
@@ -38,11 +39,13 @@ like, and they all behave the same.
 | 🗂️ **Real files** | Operates directly on `user/default/workflows/` — same files as ComfyUI's sidebar. No duplicate storage. |
 | 📍 **Multiple locations** | Register any folder on your PC as an extra workflow root via a server-side folder browser. Each appears as its own tree. |
 | 🖼️ **Thumbnail gallery** | Sidecar images paired by name. Set from a file, capture from the canvas, or drag-drop an image onto a card. Auto-normalized to a clean 800×450. |
-| 🔎 **Global search** | An always-on search box filters by filename across **every** location at once. |
-| ↕️ **Sort & views** | Card view with humanized dates ("2d ago", "Two months ago") + stackable **Name/Date** sort buttons; or a resizable, sortable **List** view. |
+| 🏷️ **Tags** | A dedicated tag pane in the left sidebar with live counts. Click a tag → see every workflow that has it across **all** roots. Add tags via a chip-input editor with autocomplete, drag workflows onto a tag to assign, drag tag rows to reorder, sort A-Z / Z-A / custom. Rename or delete globally. |
+| 🔎 **Search — focused or global** | The search box narrows the current view by default (respects folder, Subfolders, Favorites). Flip the in-box **Global** toggle to scan every root at once, ignoring folder selection. |
+| ↕️ **Sort & views** | Card view with humanized dates ("2d ago", "Two months ago") + stackable **Name/Date** sort buttons; or a resizable **List** view with sortable Name / Date / Description / Tags / Path / Size columns. |
 | 💾 **Smart Save** | Overwrites the file you loaded — and even lights up for workflows you opened the *normal* ComfyUI way, when you pick the matching thumbnail. |
 | ⭐ **Favorites & notes** | Star workflows and add per-workflow descriptions, all stored as tiny sidecar files. |
 | 🧰 **Full file ops** | New / rename / duplicate / cut-copy-paste / move / delete — folders too — with a confirmation on every delete. |
+| 🖱️ **One-click editors** | In List view, a single click on the Description or Tags cell opens the corresponding editor immediately. |
 | 🎁 **Starter pack** | 40 ready-made thumbnails included so a fresh library looks great immediately. |
 
 ---
@@ -50,6 +53,7 @@ like, and they all behave the same.
 ## 📸 Tour
 
 ### Multiple workflow locations, one gallery
+
 Click **Add location…** to open a server-side folder browser (drives,
 shortcuts, breadcrumb, or paste a path) and register any folder — even a
 network/UNC share — as a peer workflow root. Each root gets its own
@@ -57,45 +61,115 @@ collapsible tree; an offline drive simply greys out instead of breaking the
 panel. *"Remove this location"* only unregisters it — your files are never
 touched.
 
-![Multiple locations and the folder tree](docs/GW001.png)
+The left sidebar is split: **folders on top, tags on bottom**, with a
+drag handle between them. Drag to resize; your split position is
+remembered.
 
-### Thumbnails that just work
-Workflows pair with a sidecar image by name (`Portrait.json` ↔
-`Portrait.jpg`). Set one from a file, **capture the current canvas**, or drag
-an image straight onto a card. Everything the panel writes is normalized to a
-crisp **800×450 JPEG**, and thumbnails follow the workflow through every
-rename / copy / move / delete. "Remove thumbnail" keeps the image on disk
-(renamed `.removed`) so nothing is ever silently destroyed.
+### List view
 
-![Thumbnail gallery](docs/GW002.png)
+Switch to **List** for a dense, sortable details view: Name, Date,
+Description, **Tags**, Path, Size. Every column header is sortable (3-state:
+none → ▲ → ▼) and every column is resizable. Single-click on the
+Description or Tags cell opens that workflow's editor immediately — no
+double-click needed. Empty cells stay clickable.
 
-### Search, sort, and two ways to look
-A persistent **Search** box filters by filename across *all* your registered
-locations. In card view, the **Name** and **Date** buttons are independent
-3-state toggles (`A to Z → Z to A → off`, `Newest → Oldest → off`) and can be
-**stacked**. Prefer details? The **List** view gives Name / Date / Description
-/ Path / Size with resizable, click-to-sort columns. The size slider scales
-card thumbnails *and* list text.
+<img src="docs/03.GW_List-View.png" alt="List view" width="100%">
 
-![Search and sort](docs/GW003.png)
+### Save / Save As / Load
 
-### A Save button that pays attention
-**Save** overwrites the file the workflow came from. The clever part: even if
-you opened a workflow the *normal* ComfyUI way (a native tab, drag-drop),
+**Save** overwrites the file the workflow came from. The clever part: even
+if you opened a workflow the *normal* ComfyUI way (a native tab, drag-drop),
 Save activates the moment you select the thumbnail whose name matches — and
-deactivates the instant you switch to a differently-named open workflow. One
-**Save As…** (its filename pre-filled from whatever workflow is actually
-open) and a **Load** button round it out.
+deactivates the instant you switch to a differently-named open workflow.
+**Save As…** opens a picker that pre-fills the filename from whatever
+workflow is actually open, and shows the existing files in the chosen
+folder so you can pick one to overwrite by name. **Load** opens the
+single selected workflow. Closing a tab whose file you just overwrote via
+Save no longer pesters you with "Save changes?" — the panel correctly
+clears ComfyUI's native dirty flag after writing.
 
-![Smart Save](docs/GW004.png)
+### Favorites & bulk operations
 
-### Favorites, descriptions, and bulk editing
-Star your go-to workflows and filter to just those. Add a short description
-that shows on the card. Multi-select with **Ctrl-click** (toggle) and
-**Shift-click** (range, in the order you see them) to cut / copy / move /
-delete in bulk — with a confirmation modal on every delete.
+Star your go-to workflows and filter to just those with a single click.
+Multi-select with **Ctrl-click** (toggle) and **Shift-click** (range, in
+the order you see them) to cut / copy / move / delete in bulk — with a
+confirmation modal on every delete.
 
-![Favorites and bulk operations](docs/GW005.png)
+<img src="docs/04.GW_Favorites.png" alt="Favorites and bulk operations" width="100%">
+
+### Tags
+
+Tags are the headline feature. Each workflow can carry any number of
+lowercased free-form tags stored in a tiny `<stem>.tags.txt` sidecar
+(parallels the existing `.desc.txt` / `.fav` sidecars and follows the
+workflow through every rename / copy / move / delete).
+
+**Editing.** Right-click any workflow → **Tags…** (or single-click the
+Tags cell in List view, or click the dashed `(no tags)` placeholder on
+a card) to open a **chip-input editor**. Type a tag and press Enter or
+comma to add it; press × to remove. As you type, an **autocomplete
+dropdown** suggests existing tags from across all your roots so you can
+reuse the same spelling. Ctrl+Enter saves.
+
+**The tag pane.** The bottom half of the sidebar lists every distinct
+tag with a live workflow count (`Tags · N in use`). Click a tag → the
+grid flips to a **cross-root flat view** showing every workflow that has
+that tag, no matter which folder or root it lives in. The breadcrumb
+slot displays *`✕ clear  Tag: <name>`* while the filter is active.
+Click the active tag again, the ✕, or any folder to exit.
+
+<img src="docs/05.GW_Tags.png" alt="The tag pane" width="100%">
+
+**Sort & reorder.** The **Name** button cycles `default → A-Z → Z-A →
+default`. In default mode you can **drag tag rows up and down** to
+choose the order yourself; the custom order is remembered.
+
+<img src="docs/06.GW_Reorder.png" alt="Drag-reorder tags in default sort" width="100%">
+
+**Drag-to-assign.** Drag one (or several Ctrl-selected) workflow
+cards/rows onto a tag in the pane to assign that tag — merges into the
+workflow's existing tag list, never destroys.
+
+**Add / delete.** `+` in the pane header opens a prompt to add a new
+empty tag (a "draft" — shown italic, count 0). Drag workflows onto it
+to populate. `−` deletes the currently-active tag globally (with a
+confirmation; workflow files are never touched, only the tag
+associations are removed).
+
+**Right-click on a tag row** for **Rename…** (global), **Copy tag**,
+**Paste tag** (applies to currently-selected workflows), and **Delete**.
+
+**Right-click on a workflow** for the per-workflow operations:
+**Tags…** opens the editor; **Copy tags** / **Paste tags** moves a
+workflow's whole tag list onto other selected workflows; **Clear tags**
+strips every tag from the selection (with confirmation).
+
+**See it in action:**
+
+<video src="docs/Tags_Search_and_More.mp4" controls preload="metadata" width="100%"></video>
+
+[▶ Direct link to the demo video](docs/Tags_Search_and_More.mp4)
+
+### Search — focused or global
+
+The search box lives in the toolbar and is always visible. By default it
+narrows the **current view** (current root + folder ± Subfolders ±
+Favorites composed). Need to find something across every registered root?
+Flip the in-box **Global** toggle and search ignores folder + root
+selection entirely, scanning every workflow tree. The toggle is
+persistent — flip it once and the panel stays in that mode until you
+flip it back.
+
+<img src="docs/07.GW_Global-Search-toggle.png" alt="Global search toggle" width="100%">
+
+### Right-click is where the power lives
+
+Right-click any workflow card or list row to get every per-workflow
+operation in one menu: Overwrite, Rename, Duplicate, Cut, Copy, thumbnail
+management, Description, Tags, Copy/Paste/Clear tags, Delete. Multi-select
+first to apply bulk operations.
+
+<img src="docs/02.GW_Right-click-menu.png" alt="Right-click context menu" width="100%">
 
 ---
 
@@ -128,7 +202,7 @@ ComfyUI/custom_nodes/comfyui-g-workflows/
 ├── pyproject.toml
 ├── LICENSE
 ├── README.md
-├── docs/                   # README images
+├── docs/                   # README images + demo video
 └── sample-thumbnails/      # 40 ready-to-use starter thumbnails
 ```
 
@@ -177,7 +251,7 @@ operation is confined to the selected location via `os.path.commonpath`
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET  | `/tree`         | all locations + recursive folder/file trees (sidecar-paired) |
+| GET  | `/tree`         | all locations + recursive folder/file trees (sidecar-paired; carries `description`, `favorite`, `tags`) |
 | GET  | `/workflow`     | `?path=&root=` read a workflow's JSON |
 | GET  | `/thumb`        | `?path=&root=` serve a sidecar image |
 | POST | `/save`         | write a workflow (+ optional thumbnail) |
@@ -185,6 +259,9 @@ operation is confined to the selected location via `os.path.commonpath`
 | POST | `/delete_thumb` | soft-remove a thumbnail (renamed `.removed`) |
 | POST | `/set_desc`     | set / clear a workflow's description sidecar |
 | POST | `/set_fav`      | set / clear a workflow's favorite marker |
+| POST | `/set_tags`     | overwrite a workflow's tags sidecar (empty list deletes the sidecar) |
+| POST | `/rename_tag`   | globally rename a tag across every workflow in every root (merges duplicates) |
+| POST | `/delete_tag`   | globally remove a tag from every workflow that has it |
 | POST | `/rename`       | rename / move a workflow (+ its sidecars) |
 | POST | `/copy`         | copy a workflow (+ its sidecars) |
 | POST | `/move`         | bulk cross-folder move |
@@ -200,7 +277,8 @@ operation is confined to the selected location via `os.path.commonpath`
 
 Registered extra locations are persisted server-side to
 `ComfyUI/user/g_workflows_roots.json` (an allowlist — only folders you add
-are ever reachable).
+are ever reachable). Tags live in `<stem>.tags.txt` next to each workflow,
+one tag per line, lowercased and de-duplicated on save.
 
 ---
 
