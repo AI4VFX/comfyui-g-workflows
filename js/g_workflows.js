@@ -2526,7 +2526,11 @@ function wireFileEl(elm, f) {
   // instead of loading the workflow. Same shape as the col-desc block.
   const tagsCell = elm.querySelector(".col-tags");
   if (tagsCell) {
-    tagsCell.addEventListener("dblclick", (e) => {
+    // List view: single-click on the Tags cell opens the per-workflow Tags
+    // editor immediately. Modifier-clicks (Shift/Ctrl/Meta) fall through to
+    // the row so range/toggle selection still work. stopPropagation prevents
+    // the row's deferred select from running a redundant selection update.
+    tagsCell.addEventListener("click", (e) => {
       if (e.shiftKey || e.ctrlKey || e.metaKey) return;
       e.stopPropagation();
       focusFileContext(f);
