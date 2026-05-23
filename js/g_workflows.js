@@ -453,6 +453,22 @@ async function editDescription(workflowPath) {
   } catch (e) { toast("Save description failed: " + e.message); }
 }
 
+async function editTags(workflowPath) {
+  let current = [];
+  const folder = findFolderNode(state.rootId, dirName(workflowPath));
+  if (folder) {
+    const fe = (folder.files || []).find((x) => x.path === workflowPath);
+    if (fe && Array.isArray(fe.tags)) current = fe.tags.slice();
+  }
+  const next = await tagsModal(`Tags — ${baseName(workflowPath)}`, current);
+  if (next === null) return; // cancelled
+  try {
+    await apiPost("/set_tags", { path: workflowPath, tags: next, root: state.rootId });
+    await refreshTree(); renderAll();
+    toast("Tags saved");
+  } catch (e) { toast("Save tags failed: " + e.message); }
+}
+
 async function toggleFavorite(f) {
   const next = !f.favorite;
   try {
@@ -906,6 +922,43 @@ async function descModal(title, current) {
   return modalPromise(bg, row, (close) => {
     cancel.addEventListener("click", () => close(null));
     ok.addEventListener("click",     () => close(ta.value));
+  });
+}
+
+// v0 of the tags editor: a textarea, one tag per line. Tasks 7-8 replace
+// this with a chip input + autocomplete; the editTags() caller, the
+// shape of the returned value (array of strings), and the modalPromise
+// plumbing all stay the same.
+async function tagsModal(title, currentTags) {
+  const { bg, body, row } = buildModalShell(title);
+  const labelRow = el("div", { class: "label-row" });
+  labelRow.textContent = "One tag per line — saved lowercased & de-duplicated:";
+  const ta = el("textarea", { attrs: { rows: "8" } });
+  ta.value = (currentTags || []).join("\n");
+  body.appendChild(labelRow);
+  body.appendChild(ta);
+  const cancel = el("button"); cancel.textContent = "Cancel";
+  const ok     = el("button", { class: "primary" }); ok.textContent = "Save";
+  row.appendChild(cancel); row.appendChild(ok);
+  setTimeout(() => { ta.focus(); ta.select(); }, 0);
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); ok.click(); }
+    else if (e.key === "Enter") { e.stopPropagation(); } // newline, don't submit
+  });
+  return modalPromise(bg, row, (close) => {
+    cancel.addEventListener("click", () => close(null));
+    ok.addEventListener("click",     () => {
+      // Parse: split on lines, trim, lowercase, drop blanks, de-dupe (preserve order).
+      const seen = new Set();
+      const out  = [];
+      for (const line of (ta.value || "").split(/\r?\n/)) {
+        const s = line.trim().toLowerCase();
+        if (!s || seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+      }
+      close(out);
+    });
   });
 }
 
@@ -1777,6 +1830,7 @@ function wireFileEl(elm, f) {
       { label: "Remove thumbnail",     disabled: !isSingle, action: () => clearThumbnail(single) },
       "sep",
       { label: "Description…",         disabled: !isSingle, action: () => editDescription(single) },
+      { label: "Tags…",                disabled: !isSingle, action: () => editTags(single) },
       "sep",
       { label: `Delete${sel.length > 1 ? ` (${sel.length})` : ""}`, danger: true, action: () => deleteFiles(sel) },
     ]);
