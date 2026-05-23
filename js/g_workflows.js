@@ -2226,6 +2226,23 @@ function wireFileEl(elm, f) {
       editDescription(f.path);
     });
   }
+  // List view: double-clicking the Tags cell opens the tags editor
+  // instead of loading the workflow. Same shape as the col-desc block.
+  const tagsCell = elm.querySelector(".col-tags");
+  if (tagsCell) {
+    tagsCell.addEventListener("dblclick", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+      e.stopPropagation();
+      focusFileContext(f);
+      clickSeq++;
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      state.selection.clear();
+      state.selection.add(f.path);
+      state.selAnchor = f.path;
+      renderGrid(); renderToolbar();
+      editTags(f.path);
+    });
+  }
 }
 
 function fmtSize(n) {
