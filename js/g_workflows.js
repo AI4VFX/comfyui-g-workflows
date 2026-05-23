@@ -2507,21 +2507,18 @@ function wireFileEl(elm, f) {
     const img = files.find((x) => /^image\/(png|jpe?g|webp)$/i.test(x.type) || /\.(png|jpe?g|webp)$/i.test(x.name));
     if (img) await setThumbnailFromFile(f.path, img);
   });
-  // List view: double-clicking the Description cell opens the description
-  // editor instead of loading the workflow. Single-click still bubbles to
-  // the row's handler (selection works normally). Cards have no .col-desc
-  // so this is a no-op there.
+  // List view: single-click on the Description cell opens the description
+  // editor (same behaviour as the Tags cell below). Modifier-clicks fall
+  // through to the row so range/toggle selection still work. Cards have no
+  // .col-desc so this is a no-op there.
   const descCell = elm.querySelector(".col-desc");
   if (descCell) {
-    // Firefox: draggable=true on the row suppresses click/dblclick on text
-    // content of children. Force draggable=false on the cells that have
-    // their own click/dblclick semantics so the editor entry points work.
     descCell.setAttribute("draggable", "false");
-    descCell.addEventListener("dblclick", (e) => {
-      if (e.shiftKey || e.ctrlKey || e.metaKey) return;   // modified dblclick = no-op
-      e.stopPropagation();   // suppress the row's load-workflow dblclick
+    descCell.addEventListener("click", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+      e.stopPropagation();
       focusFileContext(f);
-      clickSeq++;            // invalidate the paired first-click's deferred single-select
+      clickSeq++;
       if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
       state.selection.clear();
       state.selection.add(f.path);
