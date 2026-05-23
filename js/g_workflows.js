@@ -22,7 +22,7 @@ let   doc      = document;                     // document the panel UI currentl
 const CARD_BASE = 160;                         // default grid column min (px); slider & preview base
 const LIST_COL_DEFAULT = [220, 170, 300, 200, 260, 90]; // default list column px widths (Name,Date,Desc,Tags,Path,Size)
 const LIST_COL_MIN = 60;                       // min px width per list column when resizing
-const LIST_SORTABLE = { "col-name": "name", "col-date": "date", "col-size": "size" }; // header class -> sort key
+const LIST_SORTABLE = { "col-name": "name", "col-date": "date", "col-tags": "tags", "col-size": "size" }; // header class -> sort key
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
@@ -86,7 +86,7 @@ function loadLS() {
     }
     if (parsed.listSort && typeof parsed.listSort === "object") {
       const c = parsed.listSort.col, d = parsed.listSort.dir;
-      if ((c === null || c === "name" || c === "date" || c === "size") && (d === "asc" || d === "desc"))
+      if ((c === null || c === "name" || c === "date" || c === "tags" || c === "size") && (d === "asc" || d === "desc"))
         state.listSort = { col: c, dir: d };
     }
     if (Array.isArray(parsed.cardSort)) {
@@ -2191,6 +2191,28 @@ function cmpFiles(a, b, col) {
 // decorate-sort-undecorate with original-index tiebreak.
 function sortFilesBy(files, col, dir) {
   if (!col) return files;
+  // Tags: special-cased so workflows with no tags are ALWAYS last (in both
+  // asc and desc). Among tagged workflows, sort by the first tag
+  // alphabetically (lowercased) with direction applied.
+  if (col === "tags") {
+    const indexed = files.map((f, i) => [f, i]);
+    const tagged = [];
+    const untagged = [];
+    for (const pair of indexed) {
+      const t = pair[0].tags;
+      if (Array.isArray(t) && t.length) tagged.push(pair);
+      else                              untagged.push(pair);
+    }
+    tagged.sort((A, B) => {
+      const a = String(A[0].tags[0]).toLowerCase();
+      const b = String(B[0].tags[0]).toLowerCase();
+      let r = a.localeCompare(b);
+      if (dir === "desc") r = -r;
+      return r !== 0 ? r : A[1] - B[1];
+    });
+    // Untagged keep original order (stable).
+    return [...tagged, ...untagged].map(p => p[0]);
+  }
   return files.map((f, i) => [f, i]).sort((A, B) => {
     let r = cmpFiles(A[0], B[0], col);
     if (dir === "desc") r = -r;
