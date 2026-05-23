@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/01.GW_Menu-UI.png" alt="G-Workflows" width="100%">
+<img src="docs/GW-Main.png" alt="G-Workflows" width="100%">
 
 # G-Workflows
 
@@ -64,6 +64,8 @@ touched.
 The left sidebar is split: **folders on top, tags on bottom**, with a
 drag handle between them. Drag to resize; your split position is
 remembered.
+
+<img src="docs/01.GW_Menu-UI.png" alt="Folder tree, tag pane, and gallery" width="100%">
 
 ### List view
 
