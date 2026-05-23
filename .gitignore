@@ -13,3 +13,6 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# Visual brainstorming companion sessions (local-only, never committed)
+.superpowers/
