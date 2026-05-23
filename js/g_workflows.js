@@ -48,6 +48,8 @@ const state = {
   cardSort: [],               // thumbnail sort levels (ordered): [{key:'name'|'date',dir:'asc'|'desc'}…]
   favoritesOnly: false,       // toolbar toggle: show only favorited workflows
   searchQuery: "",            // ephemeral filename filter, narrows the current view (NOT persisted)
+  searchGlobal: false,        // Search-box Global toggle: when on, search ignores
+                              // current folder/root selection and scans ALL roots
   splitPos: 0.6,              // folder-tree ratio of sidebar height (drag splitter; persisted)
   tagPaneEl: null,            // captured at panel construction (used by renderTagPane in Task 12)
   tagFilter: null,            // null = no filter; lowercase string = active tag (Task 13)
@@ -104,6 +106,7 @@ function loadLS() {
       state.cardSort = [{ key: parsed.cardSort.key, dir: parsed.cardSort.dir }];  // migrate legacy single
     }
     if (typeof parsed.splitPos === "number" && parsed.splitPos > 0.1 && parsed.splitPos < 0.9) state.splitPos = parsed.splitPos;
+    if (typeof parsed.searchGlobal === "boolean") state.searchGlobal = parsed.searchGlobal;
     if (Array.isArray(parsed.draftTags)) {
       state.draftTags = new Set(parsed.draftTags.filter((t) => typeof t === "string" && t.trim()).map((t) => t.trim().toLowerCase()));
     }
@@ -133,6 +136,7 @@ function saveLS() {
       listSort: state.listSort,
       cardSort: state.cardSort,
       splitPos: state.splitPos,
+      searchGlobal: state.searchGlobal,
       draftTags: Array.from(state.draftTags),
       tagSort: state.tagSort,
       tagOrder: state.tagOrder,
@@ -967,6 +971,8 @@ const CSS = `
 .gt-search-in::placeholder { color:#7c8694; }
 .gt-search-x { background:#2b313a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:11px; line-height:1; }
 .gt-search-x:hover { background:#3a414e; }
+.gt-search-x.on { background:#3b82f6; color:#fff; border-color:#3b82f6; }
+.gt-search-x.on:hover { background:#2563eb; border-color:#2563eb; }
 .gt-body { display:flex; flex:1; min-height:0; overflow:hidden; }
 .gt-side { display:flex; flex-direction:column; width:230px; min-width:160px; max-width:50%; border-right:1px solid #303540; resize:horizontal; }
 .gt-tree { flex:none; overflow:auto; padding:6px 4px; min-height:80px; }
@@ -1860,7 +1866,12 @@ function renderToolbar() {
   const searchWrap = el("div", { class: "gt-search" });
   const searchInput = el("input", { class: "gt-search-in", attrs: { type: "text", placeholder: "Search…" } });
   searchInput.value = state.searchQuery || "";
-  searchInput.title = "Filter visible workflows by filename (current folder, respects Subfolders and Favorites)";
+  searchInput.title = "Filter workflows by filename. Toggle Global to ignore the current folder/root and search all roots.";
+  const globalBtn = el("button", {
+    class: "gt-search-x" + (state.searchGlobal ? " on" : ""),
+    text: "Global",
+    attrs: { title: "Toggle: search across ALL folders & roots, ignoring the current selection" },
+  });
   const clearX = el("button", { class: "gt-search-x", text: "✕", attrs: { title: "Clear search" } });
   clearX.style.display = state.searchQuery ? "" : "none";
   const clearSearch = () => {
@@ -1875,7 +1886,14 @@ function renderToolbar() {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); clearSearch(); }
   });
   clearX.addEventListener("click", () => { clearSearch(); searchInput.focus(); });
+  globalBtn.addEventListener("click", () => {
+    state.searchGlobal = !state.searchGlobal;
+    globalBtn.classList.toggle("on", state.searchGlobal);
+    saveLS();
+    renderGrid();
+  });
   searchWrap.appendChild(searchInput);
+  searchWrap.appendChild(globalBtn);
   searchWrap.appendChild(clearX);
   toolbarEl.appendChild(searchWrap);
   const subBtn = mk("Subfolders", () => {
@@ -2318,14 +2336,18 @@ function renderGrid() {
   if (!state.listView) applyCardScale();
   const q = (state.searchQuery || "").trim();
   const searching = q.length > 0;
+  const globalSearch = searching && state.searchGlobal;
   const r0 = currentRoot();
-  if (!state.tagFilter && r0 && r0.available === false) {
+  // Skip the offline-root empty-state during tag-filter mode (cross-root) AND
+  // during global search (also cross-root) — other roots may still have hits.
+  if (!state.tagFilter && !globalSearch && r0 && r0.available === false) {
     gridEl.appendChild(el("div", { class: "gt-empty",
       text: "This location is offline or was removed. Reconnect the drive/folder and click Refresh." }));
     return;
   }
   // Compute the visible file set:
   //  - Tag-filter mode: flat across every root, only files with the active tag.
+  //  - Global search: flat across every root (search filter narrows below).
   //  - Otherwise: current root + current folder ± Subfolders toggle.
   // Then layer Favorites filter, then Search.
   let files;
@@ -2338,6 +2360,15 @@ function renderGrid() {
         if ((f.tags || []).indexOf(state.tagFilter) >= 0) {
           files.push(Object.assign({}, f, { __root: r.id, __rootLabel: label }));
         }
+      }
+    }
+  } else if (globalSearch) {
+    files = [];
+    for (const r of state.roots) {
+      if (!r || !r.tree) continue;
+      const label = (typeof rootDisplayLabel === "function") ? rootDisplayLabel(r) : (r.label || r.id);
+      for (const f of collectFilesRecursive(r.tree)) {
+        files.push(Object.assign({}, f, { __root: r.id, __rootLabel: label }));
       }
     }
   } else {
