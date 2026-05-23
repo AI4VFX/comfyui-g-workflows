@@ -48,6 +48,8 @@ const state = {
   cardSort: [],               // thumbnail sort levels (ordered): [{key:'name'|'date',dir:'asc'|'desc'}…]
   favoritesOnly: false,       // toolbar toggle: show only favorited workflows
   searchQuery: "",            // ephemeral filename filter, narrows the current view (NOT persisted)
+  splitPos: 0.6,              // folder-tree ratio of sidebar height (drag splitter; persisted)
+  tagPaneEl: null,            // captured at panel construction (used by renderTagPane in Task 12)
 };
 
 function loadLS() {
@@ -94,6 +96,7 @@ function loadLS() {
                && (parsed.cardSort.dir === "asc" || parsed.cardSort.dir === "desc")) {
       state.cardSort = [{ key: parsed.cardSort.key, dir: parsed.cardSort.dir }];  // migrate legacy single
     }
+    if (typeof parsed.splitPos === "number" && parsed.splitPos > 0.1 && parsed.splitPos < 0.9) state.splitPos = parsed.splitPos;
   } catch (_) {}
 }
 function saveLS() {
@@ -109,6 +112,7 @@ function saveLS() {
       listColW: state.listColW,
       listSort: state.listSort,
       cardSort: state.cardSort,
+      splitPos: state.splitPos,
     }));
   } catch (_) {}
 }
@@ -703,7 +707,12 @@ const CSS = `
 .gt-search-x { background:#2b313a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:11px; line-height:1; }
 .gt-search-x:hover { background:#3a414e; }
 .gt-body { display:flex; flex:1; min-height:0; overflow:hidden; }
-.gt-tree { width:230px; min-width:160px; max-width:50%; overflow:auto; border-right:1px solid #303540; padding:6px 4px; resize:horizontal; }
+.gt-side { display:flex; flex-direction:column; width:230px; min-width:160px; max-width:50%; border-right:1px solid #303540; resize:horizontal; }
+.gt-tree { flex:none; overflow:auto; padding:6px 4px; min-height:80px; }
+.gt-split { flex:none; height:6px; background:#2a2f38; border-top:1px solid #303540; border-bottom:1px solid #303540; cursor:row-resize; position:relative; }
+.gt-split::after { content:""; position:absolute; left:50%; top:50%; width:30px; height:2px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
+.gt-split:hover::after { background:#3b82f6; }
+.gt-tagpane { flex:1; overflow:auto; padding:6px 4px; min-height:80px; background:#1d2128; }
 .gt-grid-wrap { flex:1; overflow:auto; padding:8px 8px 52px 8px; }
 .gt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
 .gt-breadcrumb { padding:4px 4px 8px 4px; opacity:.75; font-size:12px; }
@@ -1439,8 +1448,49 @@ function buildPanel(host) {
   gridEl       = el("div", { class: "gt-grid" });
   gridWrap.appendChild(breadcrumbEl);
   gridWrap.appendChild(gridEl);
-  body.appendChild(treeEl);
+
+  // Sidebar: tree + drag splitter + tag pane
+  const side      = el("div", { class: "gt-side" });
+  side.appendChild(treeEl);
+  const splitBar  = el("div", { class: "gt-split", attrs: { title: "Drag to resize" } });
+  side.appendChild(splitBar);
+  const tagPaneEl = el("div", { class: "gt-tagpane" });
+  side.appendChild(tagPaneEl);
+  state.tagPaneEl = tagPaneEl;
+
+  body.appendChild(side);
   body.appendChild(gridWrap);
+
+  function applySplit() {
+    const p = Math.max(0.1, Math.min(0.9, state.splitPos || 0.6));
+    treeEl.style.flex    = String(p);
+    tagPaneEl.style.flex = String(1 - p);
+  }
+  applySplit();
+
+  let dragOriginY = 0;
+  let dragOriginRatio = 0.6;
+  let sideH = 0;
+  splitBar.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    dragOriginY     = e.clientY;
+    dragOriginRatio = state.splitPos;
+    sideH           = side.getBoundingClientRect().height;
+    doc.addEventListener("mousemove", onSplitMove);
+    doc.addEventListener("mouseup",   onSplitUp);
+  });
+  function onSplitMove(e) {
+    if (!sideH) return;
+    const dy = e.clientY - dragOriginY;
+    const next = dragOriginRatio + dy / sideH;
+    state.splitPos = Math.max(80 / sideH, Math.min(1 - 80 / sideH, next));
+    applySplit();
+  }
+  function onSplitUp() {
+    doc.removeEventListener("mousemove", onSplitMove);
+    doc.removeEventListener("mouseup",   onSplitUp);
+    saveLS();
+  }
   panelEl.appendChild(toolbarEl);
   panelEl.appendChild(body);
 
