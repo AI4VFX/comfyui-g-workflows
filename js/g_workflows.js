@@ -50,6 +50,7 @@ const state = {
   searchQuery: "",            // ephemeral filename filter, narrows the current view (NOT persisted)
   splitPos: 0.6,              // folder-tree ratio of sidebar height (drag splitter; persisted)
   tagPaneEl: null,            // captured at panel construction (used by renderTagPane in Task 12)
+  tagFilter: null,            // null = no filter; lowercase string = active tag (Task 13)
 };
 
 function loadLS() {
@@ -713,6 +714,13 @@ const CSS = `
 .gt-split::after { content:""; position:absolute; left:50%; top:50%; width:30px; height:2px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
 .gt-split:hover::after { background:#3b82f6; }
 .gt-tagpane { flex:1; overflow:auto; padding:6px 4px; min-height:80px; background:#1d2128; }
+.gt-tagpane .gt-tphead { font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.55; padding:4px 6px 6px; }
+.gt-tagpane .gt-tprow { display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:4px; cursor:pointer; user-select:none; }
+.gt-tagpane .gt-tprow:hover { background:#2b313a; }
+.gt-tagpane .gt-tprow.active { background:#3b82f6; color:#fff; }
+.gt-tagpane .gt-tprow .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.gt-tagpane .gt-tprow .count { opacity:.55; font-size:11px; }
+.gt-tagpane .gt-tpempty { padding:8px 6px; font-size:11px; opacity:.55; font-style:italic; }
 .gt-grid-wrap { flex:1; overflow:auto; padding:8px 8px 52px 8px; }
 .gt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
 .gt-breadcrumb { padding:4px 4px 8px 4px; opacity:.75; font-size:12px; }
@@ -1638,6 +1646,31 @@ function renderTree() {
   }
 }
 
+function renderTagPane() {
+  const host = state.tagPaneEl;
+  if (!host) return;
+  while (host.firstChild) host.removeChild(host.firstChild);
+  const counts = aggregateAllTags();
+  const head = el("div", { class: "gt-tphead" });
+  head.textContent = counts.size
+    ? `Tags · ${counts.size} in use`
+    : "Tags";
+  host.appendChild(head);
+  if (!counts.size) {
+    host.appendChild(el("div", { class: "gt-tpempty", text: "(no tags yet)" }));
+    return;
+  }
+  const entries = Array.from(counts.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [tag, n] of entries) {
+    const row = el("div", { class: "gt-tprow" + (state.tagFilter === tag ? " active" : "") });
+    row.appendChild(el("span", { class: "name", text: tag }));
+    row.appendChild(el("span", { class: "count", text: String(n) }));
+    // No click handler yet (Task 14).
+    host.appendChild(row);
+  }
+}
+
 // node: a folder node within rootObj's tree (rel path in node.path).
 // isRoot: this is the synthetic top-level node for the whole root.
 function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
@@ -2188,6 +2221,7 @@ function renderAll() {
   renderToolbar();
   renderBreadcrumb();
   renderTree();
+  renderTagPane();
   renderGrid();
   if (gridEl) {
     gridEl.removeEventListener("dragover", gridDragOver);
