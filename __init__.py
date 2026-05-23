@@ -734,6 +734,52 @@ try:
         except Exception as e:
             return _bad(str(e), 500)
 
+    @PromptServer.instance.routes.post("/comfy_greg_templates/rename_tag")
+    async def rename_tag(request):
+        """Body: {from: 'old', to: 'new'}.
+
+        Globally renames the tag across every workflow in every registered root.
+        If a workflow already has both 'from' and 'to', the merge collapses
+        (de-dupe). 'to' is normalized (trimmed + lowercased + dropped if empty).
+        Returns: {success, affected: N}.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return _bad("invalid JSON body")
+        src = (body.get("from") or "").strip().lower()
+        dst = (body.get("to") or "").strip().lower()
+        if not src or not dst:
+            return _bad("'from' and 'to' are required non-empty strings")
+        if src == dst:
+            return web.json_response({"success": True, "affected": 0})
+        affected = 0
+        for r in _ROOTS.values():
+            base = r.get("abspath")
+            if not base or not os.path.isdir(base):
+                continue
+            for dirpath, _dirs, names in os.walk(base):
+                for name in names:
+                    if not name.lower().endswith(TAGS_EXT):
+                        continue
+                    sidecar = os.path.join(dirpath, name)
+                    wf = sidecar[: -len(TAGS_EXT)] + WORKFLOW_EXT
+                    tags = _read_tags(wf)
+                    if src not in tags:
+                        continue
+                    # Replace src -> dst, dedupe preserving order.
+                    new_tags = []
+                    seen = set()
+                    for t in tags:
+                        nt = dst if t == src else t
+                        if nt in seen:
+                            continue
+                        seen.add(nt)
+                        new_tags.append(nt)
+                    _write_tags(wf, new_tags)
+                    affected += 1
+        return web.json_response({"success": True, "affected": affected})
+
     @PromptServer.instance.routes.post("/comfy_greg_templates/set_fav")
     async def route_set_fav(request):
         """Body: {path: '...json', favorite: bool}.  Marker = <stem>.fav."""
