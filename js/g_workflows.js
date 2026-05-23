@@ -491,6 +491,50 @@ async function deleteTagGlobal(name) {
   } catch (e) { toast("Delete tag failed: " + e.message); }
 }
 
+function copyTagToClipboard(tag) {
+  state.tagClipboard = [String(tag).toLowerCase()];
+  renderAll();      // refreshes the menu's enabled/disabled states next time it opens
+  toast(`Copied tag "${tag}"`);
+}
+
+async function pasteTagsOntoSelection() {
+  const clip = (state.tagClipboard || []).slice();
+  if (!clip.length) { toast("Tag clipboard is empty"); return; }
+  const sel = Array.from(state.selection || []);
+  if (!sel.length) { toast("Select workflows to paste onto"); return; }
+  // Resolve each selected path to its owning root + existing tags.
+  // Selection holds path strings; scan all roots' trees to recover the
+  // entry (paths may come from cross-root tag-filter view, so we can't
+  // assume state.rootId).
+  let okCount = 0;
+  for (const p of sel) {
+    let entry = null;
+    let rootId = state.rootId;
+    for (const r of state.roots) {
+      if (!r || !r.tree) continue;
+      for (const f of collectFilesRecursive(r.tree)) {
+        if (f.path === p) { entry = f; rootId = r.id; break; }
+      }
+      if (entry) break;
+    }
+    const existing = (entry && Array.isArray(entry.tags)) ? entry.tags : [];
+    const seen = new Set(existing);
+    const merged = existing.slice();
+    for (const t of clip) {
+      if (!seen.has(t)) { seen.add(t); merged.push(t); }
+    }
+    try {
+      await apiPost("/set_tags", { path: p, root: rootId, tags: merged });
+      okCount += 1;
+    } catch (e) {
+      console.warn("[G-Workflows] paste-tags failed for", p, e);
+    }
+  }
+  await refreshTree();
+  renderAll();
+  toast(`Pasted ${clip.length} tag(s) onto ${okCount} workflow(s)`);
+}
+
 async function editTags(workflowPath) {
   let current = [];
   const folder = findFolderNode(state.rootId, dirName(workflowPath));
