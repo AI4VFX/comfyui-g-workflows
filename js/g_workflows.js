@@ -20,7 +20,7 @@ const API_BASE = window.location.origin + API; // absolute backend base
 const APP_DOC  = document;                     // ComfyUI main-window document (canvas, topbar)
 let   doc      = document;                     // document the panel UI currently lives in
 const CARD_BASE = 160;                         // default grid column min (px); slider & preview base
-const LIST_COL_DEFAULT = [220, 170, 300, 260, 90]; // default list column px widths (Name,Date,Desc,Path,Size)
+const LIST_COL_DEFAULT = [220, 170, 300, 200, 260, 90]; // default list column px widths (Name,Date,Desc,Tags,Path,Size)
 const LIST_COL_MIN = 60;                       // min px width per list column when resizing
 const LIST_SORTABLE = { "col-name": "name", "col-date": "date", "col-size": "size" }; // header class -> sort key
 
@@ -43,7 +43,7 @@ const state = {
   cardScale: 1,               // workflow card zoom (0.25–2.5)
   recurseSubfolders: false,   // grid shows currentPath + all descendant workflows flattened
   listView: false,            // grid renders as a details-style list (Name/Date/Desc/Path/Size)
-  listColW: [220, 170, 300, 260, 90],   // px widths: Name,Date,Desc,Path,Size (resizable)
+  listColW: [220, 170, 300, 200, 260, 90],   // px widths: Name,Date,Desc,Tags,Path,Size (resizable)
   listSort: { col: null, dir: "asc" },  // col: null|'name'|'date'|'size'; dir:'asc'|'desc'
   cardSort: [],               // thumbnail sort levels (ordered): [{key:'name'|'date',dir:'asc'|'desc'}…]
   favoritesOnly: false,       // toolbar toggle: show only favorited workflows
@@ -71,7 +71,7 @@ function loadLS() {
     if (typeof parsed.recurseSubfolders === "boolean") state.recurseSubfolders = parsed.recurseSubfolders;
     if (typeof parsed.listView === "boolean") state.listView = parsed.listView;
     if (typeof parsed.favoritesOnly === "boolean") state.favoritesOnly = parsed.favoritesOnly;
-    if (Array.isArray(parsed.listColW) && parsed.listColW.length === 5
+    if (Array.isArray(parsed.listColW) && parsed.listColW.length === 6
         && parsed.listColW.every(n => typeof n === "number" && Number.isFinite(n) && n > 0)) {
       state.listColW = parsed.listColW.map(n => Math.max(LIST_COL_MIN, Math.round(n)));
     }
@@ -742,8 +742,8 @@ const CSS = `
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-empty { padding:16px; opacity:.6; text-align:center; }
 .gt-grid.gt-aslist { display:block; }
-.gt-lhead, .gt-row { display:grid; grid-template-columns:var(--gt-lcols, 220px 170px 300px 260px 90px); gap:10px; align-items:center; padding:6px 8px; }
-.gt-grid.gt-aslist .gt-lhead, .gt-grid.gt-aslist .gt-row { min-width:var(--gt-lminw, 1040px); box-sizing:border-box; }
+.gt-lhead, .gt-row { display:grid; grid-template-columns:var(--gt-lcols, 220px 170px 300px 200px 260px 90px); gap:10px; align-items:center; padding:6px 8px; }
+.gt-grid.gt-aslist .gt-lhead, .gt-grid.gt-aslist .gt-row { min-width:var(--gt-lminw, 1240px); box-sizing:border-box; }
 .gt-lhead { position:sticky; top:0; background:#1f242b; font-weight:600; opacity:.85; border-bottom:1px solid #353c47; z-index:1; }
 .gt-lhead .col { position:relative; }
 .gt-lhead .col.sortable { cursor:pointer; user-select:none; }
@@ -761,6 +761,8 @@ const CSS = `
 .gt-row .col, .gt-lhead .col { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .gt-row .col-size, .gt-lhead .col-size { text-align:right; opacity:.85; }
 .gt-row .col-desc { align-self:stretch; }   /* keep empty desc cells clickable for dblclick */
+.gt-row .col-tags { color:#cfd6df; }
+.gt-row .col-tags { align-self:stretch; }   /* empty cells stay clickable (same fix as .col-desc) */
 .gt-grid.gt-aslist .gt-row .col, .gt-grid.gt-aslist .gt-lhead .col { font-size:var(--gt-lfont,12px); }
 .gt-menu { position:fixed; background:#20242c; border:1px solid #3a414e; border-radius:6px; padding:4px 0; box-shadow:0 6px 24px rgba(0,0,0,.45); z-index:9999; min-width:180px; color:#dbe2ea; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
 .gt-menu .item { padding:6px 14px; cursor:pointer; font-size:13px; }
@@ -1409,7 +1411,7 @@ function applyCardScale() {
 // both grids the same width so they scroll together horizontally.
 function applyListCols() {
   if (!gridEl) return;
-  const w = (Array.isArray(state.listColW) && state.listColW.length === 5)
+  const w = (Array.isArray(state.listColW) && state.listColW.length === 6)
     ? state.listColW : LIST_COL_DEFAULT.slice();
   const px = w.map(n => Math.max(LIST_COL_MIN, Math.round(n)));
   gridEl.style.setProperty("--gt-lcols", px.map(n => n + "px").join(" "));
@@ -1843,7 +1845,7 @@ function renderGrid() {
     applyListCols();
     applyListFont();
     const head = el("div", { class: "gt-lhead" });
-    const cols = [["col-name", "Name"], ["col-date", "Date"], ["col-desc", "Description"], ["col-path", "Path"], ["col-size", "Size"]];
+    const cols = [["col-name", "Name"], ["col-date", "Date"], ["col-desc", "Description"], ["col-tags", "Tags"], ["col-path", "Path"], ["col-size", "Size"]];
     cols.forEach(([cls, label], i) => {
       const sortKey = LIST_SORTABLE[cls];
       const c = el("div", { class: "col " + cls + (sortKey ? " sortable" : "") });
@@ -2100,6 +2102,8 @@ function renderRow(f) {
   row.appendChild(nameCol);
   row.appendChild(mkCol("col-date", f.mtime ? new Date(f.mtime * 1000).toLocaleString() : ""));
   row.appendChild(mkCol("col-desc", (f.description || "").trim()));
+  const tagsText = Array.isArray(f.tags) && f.tags.length ? f.tags.join(", ") : "";
+  row.appendChild(mkCol("col-tags", tagsText));
   const _re = f.__root ? rootEntry(f.__root) : null;
   const _root = ((_re ? _re.abspath : state.root) || "").replace(/[\\/]+$/, "");
   const _rel = dirName(f.path);
