@@ -148,11 +148,7 @@ strips every tag from the selection (with confirmation).
 
 **See it in action:**
 
-https://github.com/AI4VFX/comfyui-g-workflows/raw/main/docs/Tags_Search_and_More.mp4
-
-<sub>If your viewer doesn't auto-embed the video above, <a href="https://github.com/AI4VFX/comfyui-g-workflows/raw/main/docs/Tags_Search_and_More.mp4">open it directly</a> or click the thumbnail below:</sub>
-
-<a href="https://github.com/AI4VFX/comfyui-g-workflows/raw/main/docs/Tags_Search_and_More.mp4">
+<a href="https://github.com/AI4VFX/comfyui-g-workflows/blob/main/docs/Tags_Search_and_More.mp4">
   <img src="docs/Tags_Search_and_More-Thumb.png" alt="▶ Tags + Search demo video" width="100%">
 </a>
 
