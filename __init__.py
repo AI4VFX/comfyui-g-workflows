@@ -440,6 +440,7 @@ def _build_tree(abs_dir, rel_dir, root_base):
             "thumbMtime": sidecar_mtime,
             "description": _read_desc(full),
             "favorite": _is_fav(full),
+            "tags": _read_tags(full),
             "mtime": mtime,
             "size": size,
         })
