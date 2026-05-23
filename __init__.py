@@ -75,6 +75,7 @@ THUMB_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 DESC_EXT = ".desc.txt"
 FAV_EXT = ".fav"  # presence of <stem>.fav marks the workflow a favorite
 WORKFLOW_EXT = ".json"
+TAGS_EXT = ".tags.txt"
 FORBIDDEN_NAME_CHARS = set(':\\/*?"<>|')
 
 # All thumbnails this pack writes are normalized to a single 16:9 JPEG that
@@ -302,6 +303,68 @@ def _is_fav(workflow_abs_path):
     """True if the workflow has a favorite marker sidecar."""
     p = _fav_path(workflow_abs_path)
     return bool(p and os.path.isfile(p))
+
+
+def _tags_path(workflow_abs_path):
+    """Sidecar text file holding the optional user tags (one per line)."""
+    if not workflow_abs_path.lower().endswith(WORKFLOW_EXT):
+        return None
+    return workflow_abs_path[: -len(WORKFLOW_EXT)] + TAGS_EXT
+
+
+def _normalize_tags(raw):
+    """Trim, lowercase, drop blanks, de-duplicate (preserve first-seen order).
+
+    Accepts either a list of strings or a single newline-separated string.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        lines = raw.splitlines()
+    else:
+        lines = list(raw)
+    out = []
+    seen = set()
+    for t in lines:
+        s = (t or "").strip().lower()
+        if not s:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _read_tags(workflow_abs_path):
+    """Return the workflow's tag list (lowercased, de-duped) or [] if none."""
+    p = _tags_path(workflow_abs_path)
+    if not p or not os.path.isfile(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return _normalize_tags(f.read())
+    except OSError:
+        return []
+
+
+def _write_tags(workflow_abs_path, tags):
+    """Overwrite the sidecar with the normalized tags. Empty list -> delete."""
+    p = _tags_path(workflow_abs_path)
+    if not p:
+        return
+    normalized = _normalize_tags(tags)
+    if not normalized:
+        # Empty list collapses the sidecar entirely.
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        return
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(normalized) + "\n")
 
 
 def _decode_data_url(data_url):
