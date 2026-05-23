@@ -47,7 +47,7 @@ const state = {
   listSort: { col: null, dir: "asc" },  // col: null|'name'|'date'|'size'; dir:'asc'|'desc'
   cardSort: [],               // thumbnail sort levels (ordered): [{key:'name'|'date',dir:'asc'|'desc'}…]
   favoritesOnly: false,       // toolbar toggle: show only favorited workflows
-  searchQuery: "",            // ephemeral global filename filter (NOT persisted)
+  searchQuery: "",            // ephemeral filename filter, narrows the current view (NOT persisted)
 };
 
 function loadLS() {
@@ -239,6 +239,32 @@ async function doSaveTo(relPath, overwrite, rootId) {
     const r = await apiPost("/save", body);
     state.loadedSourcePath = r.path;
     state.loadedRootId = rootId;
+    // Clear ComfyUI's native dirty flag when we just overwrote the file
+    // backing the active workflow — otherwise close-tab / switch-tab still
+    // prompts "Save changes?". Mirrors what ComfyWorkflow.save() does
+    // internally: sync content/originalContent, reset the change tracker,
+    // clear isModified. Only meaningful for the default root, since the
+    // workflow store only tracks user/default/workflows/.
+    if (rootId === "default") {
+      try {
+        const ws = app && app.extensionManager && app.extensionManager.workflow;
+        const aw = ws && (ws.activeWorkflow
+          || (typeof ws.getActiveWorkflow === "function" && ws.getActiveWorkflow()));
+        if (aw) {
+          const awPath = String(aw.path || "").replace(/\\/g, "/");
+          const ourPath = "workflows/" + String(r.path).replace(/\\/g, "/");
+          if (awPath && awPath === ourPath) {
+            const json = JSON.stringify(workflow);
+            try { aw.content = json; } catch (_) {}
+            try { aw.originalContent = json; } catch (_) {}
+            try { aw.changeTracker && typeof aw.changeTracker.reset === "function" && aw.changeTracker.reset(); } catch (_) {}
+            try { aw.isModified = false; } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("[G-Workflows] could not clear ComfyUI dirty flag after save", e);
+      }
+    }
     await refreshTree();
     renderAll();
     pingNativeRefresh();
@@ -585,26 +611,6 @@ function rootDisplayLabel(r) {
   return r.id === "default" ? "workflows" : (r.label || r.abspath || r.id);
 }
 
-// Global filename search across EVERY registered location's whole tree.
-// Matches the filename stem only (not folder path), case-insensitive
-// substring. Each hit is tagged with its owning root so interactions
-// operate in the right location (see focusFileContext / wireFileEl).
-function collectAllMatches(query) {
-  const q = query.toLowerCase();
-  const out = [];
-  for (const r of state.roots) {
-    if (!r || !r.tree) continue;
-    const label = rootDisplayLabel(r);
-    for (const f of collectFilesRecursive(r.tree)) {
-      const stem = baseName(f.path).replace(/\.json$/i, "");
-      if (stem.toLowerCase().indexOf(q) >= 0) {
-        out.push(Object.assign({}, f, { __root: r.id, __rootLabel: label }));
-      }
-    }
-  }
-  return out;
-}
-
 // When a file came from a cross-root search hit, point the active
 // location/folder at it so all existing single-root machinery
 // (load, save, context menu, thumbnails) operates correctly. No-op for
@@ -715,6 +721,7 @@ const CSS = `
 .gt-row.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-row .col, .gt-lhead .col { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .gt-row .col-size, .gt-lhead .col-size { text-align:right; opacity:.85; }
+.gt-row .col-desc { align-self:stretch; }   /* keep empty desc cells clickable for dblclick */
 .gt-grid.gt-aslist .gt-row .col, .gt-grid.gt-aslist .gt-lhead .col { font-size:var(--gt-lfont,12px); }
 .gt-menu { position:fixed; background:#20242c; border:1px solid #3a414e; border-radius:6px; padding:4px 0; box-shadow:0 6px 24px rgba(0,0,0,.45); z-index:9999; min-width:180px; color:#dbe2ea; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
 .gt-menu .item { padding:6px 14px; cursor:pointer; font-size:13px; }
@@ -806,7 +813,18 @@ function modalPromise(bg, row, onClose) {
       }
     };
     doc.addEventListener("keydown", onKey);
-    bg.addEventListener("click", (e) => { if (e.target === bg) close(null); });
+    // Click-outside closes — but ONLY if the press AND release both land on
+    // the backdrop. An internal drag that releases outside the modal (e.g.
+    // pulling the textarea's resize grip past the modal edge, or selecting
+    // text and overshooting) would otherwise dispatch the click event on bg
+    // and close the modal unexpectedly.
+    let mouseDownTarget = null;
+    bg.addEventListener("mousedown", (e) => { mouseDownTarget = e.target; });
+    bg.addEventListener("click", (e) => {
+      const wasOutside = e.target === bg && mouseDownTarget === bg;
+      mouseDownTarget = null;
+      if (wasOutside) close(null);
+    });
     onClose(close);
     doc.body.appendChild(bg);
   });
@@ -896,11 +914,16 @@ async function pickerModal({ title, startFolder, startName }) {
   const { bg, body, row } = buildModalShell(title);
   const folderLabelRow = el("div", { class: "label-row" }); folderLabelRow.textContent = "Folder:";
   const treeBox        = el("div", { class: "picker-tree" });
+  const filesLabelRow  = el("div", { class: "label-row", style: { marginTop: "10px" } });
+  filesLabelRow.textContent = "Existing files in this folder (click to use the name):";
+  const filesBox       = el("div", { class: "picker-tree" });
   const nameLabelRow   = el("div", { class: "label-row", style: { marginTop: "10px" } }); nameLabelRow.textContent = "Filename:";
   const nameInput      = el("input", { attrs: { type: "text" } }); nameInput.value = startName || "";
   const preview        = el("div", { class: "preview" });
   body.appendChild(folderLabelRow);
   body.appendChild(treeBox);
+  body.appendChild(filesLabelRow);
+  body.appendChild(filesBox);
   body.appendChild(nameLabelRow);
   body.appendChild(nameInput);
   body.appendChild(preview);
@@ -921,15 +944,46 @@ async function pickerModal({ title, startFolder, startName }) {
       const lab   = el("span", { class: "label" });
       lab.textContent = node.name || `(${rootLabel()} root)`;
       r.appendChild(icon); r.appendChild(lab);
-      r.addEventListener("click", () => { selectedFolder = node.path; renderPickerTree(); updatePreview(); });
+      r.addEventListener("click", () => { selectedFolder = node.path; renderPickerTree(); renderFilesList(); updatePreview(); });
       treeBox.appendChild(r);
       for (const sub of (node.folders || [])) renderNode(sub, depth + 1);
     };
     const r0 = currentRoot();
     if (r0 && r0.tree) renderNode(r0.tree, 0);
   }
+  // Existing .json files in the currently-selected folder. Clicking a row
+  // copies the filename into nameInput so Save targets that file — the
+  // existing clickSaveAs `exists` check + confirmModal handle the actual
+  // overwrite prompt. Backend already filters out dotfiles + non-.json,
+  // so `.desc.txt` / `.fav` sidecars never appear here.
+  function renderFilesList() {
+    clear(filesBox);
+    const folder = findFolderNode(state.rootId, selectedFolder);
+    const files  = (folder && folder.files) || [];
+    if (!files.length) {
+      const empty = el("div", { class: "gt-empty", style: { padding: "8px", fontSize: "11px", textAlign: "left" } });
+      empty.textContent = "(no workflows in this folder)";
+      filesBox.appendChild(empty);
+      return;
+    }
+    const current = (nameInput.value || "").trim().toLowerCase();
+    const sorted  = files.slice().sort((a, b) =>
+      (a.name || baseName(a.path)).localeCompare(b.name || baseName(b.path), undefined, { sensitivity: "base" }));
+    for (const f of sorted) {
+      const fname = f.name || baseName(f.path);
+      const r = el("div", { class: "gt-tnode" + (fname.toLowerCase() === current ? " active" : "") });
+      r.appendChild(el("span", { class: "icon", text: "📄" }));
+      r.appendChild(el("span", { class: "label", text: fname }));
+      r.addEventListener("click", () => {
+        nameInput.value = fname;
+        renderFilesList(); updatePreview();
+      });
+      filesBox.appendChild(r);
+    }
+  }
   renderPickerTree();
-  nameInput.addEventListener("input", updatePreview);
+  renderFilesList();
+  nameInput.addEventListener("input", () => { renderFilesList(); updatePreview(); });
   updatePreview();
   const cancel = el("button"); cancel.textContent = "Cancel";
   const newF   = el("button"); newF.textContent   = "New folder…";
@@ -945,7 +999,7 @@ async function pickerModal({ title, startFolder, startName }) {
         await apiPost("/mkdir", { path: selectedFolder, name: name.trim(), root: state.rootId });
         await refreshTree();
         selectedFolder = `${selectedFolder ? selectedFolder + "/" : ""}${name.trim()}`;
-        renderPickerTree(); updatePreview();
+        renderPickerTree(); renderFilesList(); updatePreview();
       } catch (e) { toast("Create folder failed: " + e.message); }
     });
     save.addEventListener("click", () => {
@@ -1277,7 +1331,7 @@ function renderToolbar() {
   const searchWrap = el("div", { class: "gt-search" });
   const searchInput = el("input", { class: "gt-search-in", attrs: { type: "text", placeholder: "Search…" } });
   searchInput.value = state.searchQuery || "";
-  searchInput.title = "Filter by filename across every location in the tree";
+  searchInput.title = "Filter visible workflows by filename (current folder, respects Subfolders and Favorites)";
   const clearX = el("button", { class: "gt-search-x", text: "✕", attrs: { title: "Clear search" } });
   clearX.style.display = state.searchQuery ? "" : "none";
   const clearSearch = () => {
@@ -1567,19 +1621,24 @@ function renderGrid() {
   const q = (state.searchQuery || "").trim();
   const searching = q.length > 0;
   const r0 = currentRoot();
-  if (!searching && r0 && r0.available === false) {
+  if (r0 && r0.available === false) {
     gridEl.appendChild(el("div", { class: "gt-empty",
       text: "This location is offline or was removed. Reconnect the drive/folder and click Refresh." }));
     return;
   }
-  let files;
-  if (searching) {
-    files = collectAllMatches(q);   // every location, filename only
-  } else {
-    const node = findFolderNode(state.rootId, state.currentPath);
-    files = node ? (state.recurseSubfolders ? collectFilesRecursive(node) : (node.files || [])) : [];
-  }
+  // Compute the panel's normal visible-file set first (current root +
+  // current folder ± Subfolders toggle ± Favorites filter), THEN apply
+  // search as a pure filename-substring filter on top. Search no longer
+  // bypasses the current scope and goes cross-root — it just narrows
+  // whatever you're already looking at.
+  const node = findFolderNode(state.rootId, state.currentPath);
+  let files = node ? (state.recurseSubfolders ? collectFilesRecursive(node) : (node.files || [])) : [];
   if (state.favoritesOnly) files = files.filter((f) => f.favorite);
+  if (searching) {
+    const ql = q.toLowerCase();
+    files = files.filter((f) =>
+      baseName(f.path).replace(/\.json$/i, "").toLowerCase().indexOf(ql) >= 0);
+  }
   if (!files.length) {
     const empty = el("div", { class: "gt-empty" });
     empty.textContent = searching
@@ -1731,6 +1790,25 @@ function wireFileEl(elm, f) {
     const img = files.find((x) => /^image\/(png|jpe?g|webp)$/i.test(x.type) || /\.(png|jpe?g|webp)$/i.test(x.name));
     if (img) await setThumbnailFromFile(f.path, img);
   });
+  // List view: double-clicking the Description cell opens the description
+  // editor instead of loading the workflow. Single-click still bubbles to
+  // the row's handler (selection works normally). Cards have no .col-desc
+  // so this is a no-op there.
+  const descCell = elm.querySelector(".col-desc");
+  if (descCell) {
+    descCell.addEventListener("dblclick", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return;   // modified dblclick = no-op
+      e.stopPropagation();   // suppress the row's load-workflow dblclick
+      focusFileContext(f);
+      clickSeq++;            // invalidate the paired first-click's deferred single-select
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      state.selection.clear();
+      state.selection.add(f.path);
+      state.selAnchor = f.path;
+      renderGrid(); renderToolbar();
+      editDescription(f.path);
+    });
+  }
 }
 
 function fmtSize(n) {
