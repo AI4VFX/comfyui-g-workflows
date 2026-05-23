@@ -1294,9 +1294,13 @@ async function tagsModal(title, currentTags) {
       wrap.insertBefore(chip, input);
     }
   }
-  for (const t of (currentTags || [])) addTag(t);
-
+  // Append the input FIRST. renderChips inserts each chip BEFORE the input,
+  // so the input must already be a child of wrap before any chip is added —
+  // otherwise insertBefore(chip, input) throws NotFoundError when the
+  // workflow has pre-existing tags. (Workflows with no tags slipped past
+  // this for a while because the addTag loop is empty in that case.)
   wrap.appendChild(input);
+  for (const t of (currentTags || [])) addTag(t);
   wrap.addEventListener("click", () => input.focus());
 
   // Autocomplete dropdown — sourced from the live tag aggregation,
