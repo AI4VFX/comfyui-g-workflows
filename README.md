@@ -148,9 +148,9 @@ strips every tag from the selection (with confirmation).
 
 **See it in action:**
 
-<video src="docs/Tags_Search_and_More.mp4" controls preload="metadata" width="100%"></video>
-
-[▶ Direct link to the demo video](docs/Tags_Search_and_More.mp4)
+<a href="docs/Tags_Search_and_More.mp4">
+  <img src="docs/Tags_Search_and_More-Thumb.png" alt="▶ Tags + Search demo video" width="100%">
+</a>
 
 ### Search — focused or global
 
