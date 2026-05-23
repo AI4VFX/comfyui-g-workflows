@@ -1821,6 +1821,20 @@ function renderToolbar() {
 function renderBreadcrumb() {
   if (!breadcrumbEl) return;
   clear(breadcrumbEl);
+  // In tag-filter mode the folder selection is "muted" — there's no real
+  // folder path to show, so the breadcrumb slot hosts the tag notice
+  // instead: "✕ clear  Tag: <name>". Same click target (the ✕) clears
+  // the filter.
+  if (state.tagFilter) {
+    breadcrumbEl.classList.add("gt-tag-notice");
+    const x = el("span", { class: "clear", text: "✕ clear", attrs: { title: "Clear tag filter" } });
+    x.addEventListener("click", () => { state.tagFilter = null; renderAll(); });
+    breadcrumbEl.appendChild(x);
+    breadcrumbEl.appendChild(el("span", { class: "label", text: "Tag:" }));
+    breadcrumbEl.appendChild(el("span", { class: "name", text: state.tagFilter }));
+    return;
+  }
+  breadcrumbEl.classList.remove("gt-tag-notice");
   const rootId = state.rootId;
   const r0 = currentRoot();
   const root = el("span", { class: "crumb" });
@@ -2198,17 +2212,8 @@ function renderGrid() {
     files = files.filter((f) =>
       baseName(f.path).replace(/\.json$/i, "").toLowerCase().indexOf(ql) >= 0);
   }
-  // Notice strip (only in tag-filter mode). Compact one-liner: ✕ on the left,
-  // then "clear", then "Tag:", then the active tag name in blue.
-  if (state.tagFilter) {
-    const notice = el("div", { class: "gt-tag-notice" });
-    const x = el("span", { class: "clear", text: "✕ clear", attrs: { title: "Clear tag filter" } });
-    x.addEventListener("click", () => { state.tagFilter = null; renderAll(); });
-    notice.appendChild(x);
-    notice.appendChild(el("span", { class: "label", text: "Tag:" }));
-    notice.appendChild(el("span", { class: "name", text: state.tagFilter }));
-    gridEl.appendChild(notice);
-  }
+  // In tag-filter mode the notice is rendered in the breadcrumb slot
+  // (see renderBreadcrumb), not above the grid.
   if (!files.length) {
     const empty = el("div", { class: "gt-empty" });
     empty.textContent = state.tagFilter
