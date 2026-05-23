@@ -1,6 +1,6 @@
 # Starter thumbnails
 
-40 ready-to-use **800×450 JPEG** thumbnails, already in G-Workflows' native
+43 ready-to-use **800×450 JPEG** thumbnails, already in G-Workflows' native
 format, so a fresh library looks good immediately.
 
 They're named after common workflow types (e.g. `Batch_Upscale.jpg`,

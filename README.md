@@ -46,7 +46,7 @@ you like, and they all behave the same.
 | ⭐ **Favorites & notes** | Star workflows and add per-workflow descriptions, all stored as tiny sidecar files. |
 | 🧰 **Full file ops** | New / rename / duplicate / cut-copy-paste / move / delete — folders too — with a confirmation on every delete. |
 | 🖱️ **One-click editors** | In List view, a single click on the Description or Tags cell opens the corresponding editor immediately. |
-| 🎁 **Starter pack** | 40 ready-made thumbnails included so a fresh library looks great immediately. |
+| 🎁 **Starter pack** | 43 ready-made thumbnails included so a fresh library looks great immediately. |
 
 ---
 
@@ -203,7 +203,7 @@ ComfyUI/custom_nodes/comfyui-g-workflows/
 ├── LICENSE
 ├── README.md
 ├── docs/                   # README images + demo video
-└── sample-thumbnails/      # 40 ready-to-use starter thumbnails
+└── sample-thumbnails/      # 43 ready-to-use starter thumbnails
 ```
 
 No extra dependencies — it uses only the Python standard library plus
@@ -213,7 +213,7 @@ No extra dependencies — it uses only the Python standard library plus
 
 ## 🎁 Starter thumbnails
 
-`sample-thumbnails/` contains **40 hand-made 800×450 thumbnails** named after
+`sample-thumbnails/` contains **43 hand-made 800×450 thumbnails** named after
 common workflow types (e.g. `Batch_Upscale.jpg`, `LTX-T2V.jpg`,
 `QwenPromptEnhancer.jpg`). Use them to give a fresh library an instant
 look:
