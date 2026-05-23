@@ -497,6 +497,26 @@ function copyTagToClipboard(tag) {
   toast(`Copied tag "${tag}"`);
 }
 
+function copyTagsFromWorkflow(workflowPath) {
+  // Find the file entry to read its tags. Scan all roots (cross-root safe).
+  let entry = null;
+  for (const r of state.roots) {
+    if (!r || !r.tree) continue;
+    for (const f of collectFilesRecursive(r.tree)) {
+      if (f.path === workflowPath) { entry = f; break; }
+    }
+    if (entry) break;
+  }
+  const tags = (entry && Array.isArray(entry.tags)) ? entry.tags.slice() : [];
+  if (!tags.length) {
+    toast("Workflow has no tags to copy");
+    return;
+  }
+  state.tagClipboard = tags.map((t) => String(t).toLowerCase());
+  renderAll();
+  toast(`Copied ${tags.length} tag(s) from ${baseName(workflowPath)}`);
+}
+
 async function pasteTagsOntoSelection() {
   const clip = (state.tagClipboard || []).slice();
   if (!clip.length) { toast("Tag clipboard is empty"); return; }
@@ -2172,6 +2192,8 @@ function wireFileEl(elm, f) {
       "sep",
       { label: "Description…",         disabled: !isSingle, action: () => editDescription(single) },
       { label: "Tags…",                disabled: !isSingle, action: () => editTags(single) },
+      { label: "Copy tags",            disabled: !isSingle, action: () => copyTagsFromWorkflow(single) },
+      { label: "Paste tags",           disabled: !(state.tagClipboard && state.tagClipboard.length), action: () => pasteTagsOntoSelection() },
       "sep",
       { label: `Delete${sel.length > 1 ? ` (${sel.length})` : ""}`, danger: true, action: () => deleteFiles(sel) },
     ]);
