@@ -2509,6 +2509,10 @@ function wireFileEl(elm, f) {
   // so this is a no-op there.
   const descCell = elm.querySelector(".col-desc");
   if (descCell) {
+    // Firefox: draggable=true on the row suppresses click/dblclick on text
+    // content of children. Force draggable=false on the cells that have
+    // their own click/dblclick semantics so the editor entry points work.
+    descCell.setAttribute("draggable", "false");
     descCell.addEventListener("dblclick", (e) => {
       if (e.shiftKey || e.ctrlKey || e.metaKey) return;   // modified dblclick = no-op
       e.stopPropagation();   // suppress the row's load-workflow dblclick
@@ -2522,14 +2526,14 @@ function wireFileEl(elm, f) {
       editDescription(f.path);
     });
   }
-  // List view: double-clicking the Tags cell opens the tags editor
-  // instead of loading the workflow. Same shape as the col-desc block.
+  // List view: single-click on the Tags cell opens the per-workflow Tags
+  // editor immediately. Modifier-clicks (Shift/Ctrl/Meta) fall through to
+  // the row so range/toggle selection still work. stopPropagation prevents
+  // the row's deferred select from running a redundant selection update.
+  // Same Firefox draggable=false fix as the Description cell.
   const tagsCell = elm.querySelector(".col-tags");
   if (tagsCell) {
-    // List view: single-click on the Tags cell opens the per-workflow Tags
-    // editor immediately. Modifier-clicks (Shift/Ctrl/Meta) fall through to
-    // the row so range/toggle selection still work. stopPropagation prevents
-    // the row's deferred select from running a redundant selection update.
+    tagsCell.setAttribute("draggable", "false");
     tagsCell.addEventListener("click", (e) => {
       if (e.shiftKey || e.ctrlKey || e.metaKey) return;
       e.stopPropagation();
