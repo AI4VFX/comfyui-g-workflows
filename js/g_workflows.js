@@ -966,11 +966,12 @@ const CSS = `
 .gt-toolbar button.primary:hover { background:#2563eb; }
 .gt-toolbar button:disabled { opacity:.4; cursor:not-allowed; }
 .gt-toolbar .gt-spacer { flex:1; }
-.gt-search { display:flex; align-items:center; gap:4px; }
-.gt-search-in { background:#13161a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:5px 8px; font-size:12px; width:170px; }
+.gt-search { display:inline-flex; align-items:center; gap:4px; background:#13161a; border:1px solid #3a414e; border-radius:4px; padding:2px 4px 2px 8px; }
+.gt-search:focus-within { border-color:#3b82f6; }
+.gt-search-in { background:transparent; color:#dbe2ea; border:none; outline:none; padding:3px 0; font-size:12px; width:150px; flex:0 0 auto; }
 .gt-search-in::placeholder { color:#7c8694; }
-.gt-search-x { background:#2b313a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:11px; line-height:1; }
-.gt-search-x:hover { background:#3a414e; }
+.gt-search-x { background:transparent; color:#9aa6b2; border:1px solid transparent; border-radius:3px; padding:1px 7px 2px; cursor:pointer; font:600 10px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; text-transform:uppercase; letter-spacing:.3px; }
+.gt-search-x:hover { background:#2b313a; color:#dbe2ea; }
 .gt-search-x.on { background:#3b82f6; color:#fff; border-color:#3b82f6; }
 .gt-search-x.on:hover { background:#2563eb; border-color:#2563eb; }
 .gt-body { display:flex; flex:1; min-height:0; overflow:hidden; }
