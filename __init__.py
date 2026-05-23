@@ -906,6 +906,9 @@ try:
                     src_fav = src_stem + FAV_EXT
                     if os.path.isfile(src_fav):
                         os.rename(src_fav, dst_stem + FAV_EXT)
+                    src_tags = src_stem + TAGS_EXT
+                    if os.path.isfile(src_tags):
+                        os.rename(src_tags, dst_stem + TAGS_EXT)
                     moved.append({
                         "from": rel,
                         "to": _rel(dst, base),
