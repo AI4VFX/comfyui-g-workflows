@@ -2329,6 +2329,20 @@ function renderCard(f) {
     tags.title = tagList.join(", ");
   }
   meta.appendChild(tags);
+  tags.addEventListener("dblclick", (e) => {
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    // Ignore dbl-clicks on actual (non-empty) pills — single-click already
+    // enters filter mode; the empty-state placeholder (.pill.empty) IS valid.
+    if (e.target.classList && e.target.classList.contains("pill") && !e.target.classList.contains("empty")) return;
+    e.stopPropagation();
+    focusFileContext(f);
+    clickSeq++;
+    state.selection.clear();
+    state.selection.add(f.path);
+    state.selAnchor = f.path;
+    renderGrid(); renderToolbar();
+    editTags(f.path);
+  });
   card.appendChild(thumb); card.appendChild(meta);
   card.appendChild(makeFavStar(f));
   wireFileEl(card, f);
