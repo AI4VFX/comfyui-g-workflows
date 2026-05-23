@@ -148,9 +148,7 @@ strips every tag from the selection (with confirmation).
 
 **See it in action:**
 
-<a href="https://github.com/AI4VFX/comfyui-g-workflows/blob/main/docs/Tags_Search_and_More.mp4">
-  <img src="docs/Tags_Search_and_More-Thumb.png" alt="▶ Tags + Search demo video" width="100%">
-</a>
+https://github.com/user-attachments/assets/0895f88c-3f41-4019-8bc3-55f382a28aa4
 
 ### Search — focused or global
 
