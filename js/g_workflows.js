@@ -51,6 +51,7 @@ const state = {
   splitPos: 0.6,              // folder-tree ratio of sidebar height (drag splitter; persisted)
   tagPaneEl: null,            // captured at panel construction (used by renderTagPane in Task 12)
   tagFilter: null,            // null = no filter; lowercase string = active tag (Task 13)
+  tagClipboard: [],           // shared one-buffer tag clipboard (Task 18)
 };
 
 function loadLS() {
@@ -456,6 +457,38 @@ async function editDescription(workflowPath) {
     await refreshTree(); renderAll();
     toast("Description saved");
   } catch (e) { toast("Save description failed: " + e.message); }
+}
+
+async function renameTagGlobal(oldName) {
+  const next = await promptModal(`Rename tag "${oldName}"`, "New name:", oldName);
+  if (next === null) return;
+  const dst = (next || "").trim().toLowerCase();
+  if (!dst) { toast("Tag name cannot be empty"); return; }
+  if (dst === oldName) return;
+  try {
+    const r = await apiPost("/rename_tag", { from: oldName, to: dst });
+    await refreshTree();
+    // If the user was filtering by the renamed tag, follow it to the new name.
+    if (state.tagFilter === oldName) state.tagFilter = dst;
+    renderAll();
+    toast(`Renamed "${oldName}" → "${dst}" across ${r.affected} workflow(s)`);
+  } catch (e) { toast("Rename failed: " + e.message); }
+}
+
+async function deleteTagGlobal(name) {
+  const ok = await confirmModal(
+    "Remove tag?",
+    `Remove the tag "${name}" from every workflow that has it?\n\n` +
+    `The workflow files themselves are not touched — only the tag association is removed.`
+  );
+  if (!ok) return;
+  try {
+    const r = await apiPost("/delete_tag", { from: name });
+    await refreshTree();
+    if (state.tagFilter === name) state.tagFilter = null;
+    renderAll();
+    toast(`Removed "${name}" from ${r.affected} workflow(s)`);
+  } catch (e) { toast("Delete tag failed: " + e.message); }
 }
 
 async function editTags(workflowPath) {
@@ -1674,6 +1707,16 @@ function renderTagPane() {
     row.addEventListener("click", () => {
       state.tagFilter = (state.tagFilter === tag) ? null : tag;
       renderAll();
+    });
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      showMenu(e.clientX, e.clientY, [
+        { label: "Rename…", action: () => renameTagGlobal(tag) },
+        { label: "Copy tag", action: () => copyTagToClipboard(tag) },
+        { label: "Paste tag", disabled: !state.tagClipboard || !state.tagClipboard.length, action: () => pasteTagsOntoSelection() },
+        "sep",
+        { label: "Delete", danger: true, action: () => deleteTagGlobal(tag) },
+      ]);
     });
     host.appendChild(row);
   }
