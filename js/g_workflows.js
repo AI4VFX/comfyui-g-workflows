@@ -851,7 +851,8 @@ const CSS = `
 .gt-card .tags .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:10px; cursor:pointer; white-space:nowrap; flex-shrink:0; user-select:none; }
 .gt-card .tags .pill:hover { background:#353c47; }
 .gt-card .tags .pill.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
-.gt-card .tags .pill.empty { font-style:italic; color:#6a737d; cursor:default; border-style:dashed; }
+.gt-card .tags .pill.empty { font-style:italic; color:#6a737d; cursor:pointer; border-style:dashed; }
+.gt-card .tags .pill.empty:hover { color:#dbe2ea; border-color:#3b82f6; background:#1f2733; }
 .gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-empty { padding:16px; opacity:.6; text-align:center; }
@@ -2312,6 +2313,18 @@ function renderCard(f) {
   const tagList = Array.isArray(f.tags) ? f.tags : [];
   if (!tagList.length) {
     const empty = el("span", { class: "pill empty", text: "(no tags)" });
+    empty.title = "Add tags…";
+    empty.addEventListener("click", (e) => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+      e.stopPropagation();
+      focusFileContext(f);
+      clickSeq++;
+      state.selection.clear();
+      state.selection.add(f.path);
+      state.selAnchor = f.path;
+      renderGrid(); renderToolbar();
+      editTags(f.path);
+    });
     tags.appendChild(empty);
     tags.title = "";
   } else {
