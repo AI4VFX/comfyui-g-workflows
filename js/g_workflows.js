@@ -669,6 +669,50 @@ function copyTagToClipboard(tag) {
   toast(`Copied tag "${tag}"`);
 }
 
+// Remove ALL tags from every workflow in the given selection. Confirmation
+// modal first (destructive). Workflows with no tags are skipped silently;
+// the final toast reports how many were actually cleared.
+async function clearTagsOnSelection(paths) {
+  if (!paths || !paths.length) return;
+  const n = paths.length;
+  const ok = await confirmModal(
+    "Clear all tags?",
+    `Remove ALL tags from ${n === 1 ? "this workflow" : `${n} workflows`}?\n\n` +
+    `The workflow file${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} not touched — only the tag associations are removed. Cannot be undone.`
+  );
+  if (!ok) return;
+  let okCount = 0;
+  let untaggedCount = 0;
+  for (const p of paths) {
+    let entry = null, rootId = state.rootId;
+    for (const r of state.roots) {
+      if (!r || !r.tree) continue;
+      for (const f of collectFilesRecursive(r.tree)) {
+        if (f.path === p) { entry = f; rootId = r.id; break; }
+      }
+      if (entry) break;
+    }
+    if (!entry || !Array.isArray(entry.tags) || !entry.tags.length) {
+      untaggedCount += 1;
+      continue;
+    }
+    try {
+      await apiPost("/set_tags", { path: p, root: rootId, tags: [] });
+      okCount += 1;
+    } catch (e) {
+      console.warn("[G-Workflows] clearTags failed for", p, e);
+    }
+  }
+  await refreshTree();
+  renderAll();
+  const msg = okCount && untaggedCount
+    ? `Cleared tags from ${okCount} workflow(s); ${untaggedCount} had none`
+    : okCount
+    ? `Cleared tags from ${okCount} workflow(s)`
+    : `No workflows had tags to clear`;
+  toast(msg);
+}
+
 function copyTagsFromWorkflow(workflowPath) {
   // Find the file entry to read its tags. Scan all roots (cross-root safe).
   let entry = null;
@@ -2566,6 +2610,7 @@ function wireFileEl(elm, f) {
       { label: "Tags…",                disabled: !isSingle, action: () => editTags(single) },
       { label: "Copy tags",            disabled: !isSingle, action: () => copyTagsFromWorkflow(single) },
       { label: "Paste tags",           disabled: !(state.tagClipboard && state.tagClipboard.length), action: () => pasteTagsOntoSelection() },
+      { label: `Clear tags${sel.length > 1 ? ` (${sel.length})` : ""}`, danger: true, action: () => clearTagsOnSelection(sel) },
       "sep",
       { label: `Delete${sel.length > 1 ? ` (${sel.length})` : ""}`, danger: true, action: () => deleteFiles(sel) },
     ]);
