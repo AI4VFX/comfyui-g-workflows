@@ -43,10 +43,11 @@ you like, and they all behave the same.
 | 🔎 **Search — focused or global** | The search box narrows the current view by default (respects folder, Subfolders, Favorites). Flip the in-box **Global** toggle to scan every root at once, ignoring folder selection. |
 | ↕️ **Sort & views** | Card view with humanized dates ("2d ago", "Two months ago") + stackable **Name/Date** sort buttons; or a resizable **List** view with sortable Name / Date / Description / Tags / Path / Size columns. |
 | 💾 **Smart Save** | Overwrites the file you loaded — and even lights up for workflows you opened the *normal* ComfyUI way, when you pick the matching thumbnail. |
+| 🛟 **Auto-backup & safety** | Optional rolling snapshots of the workflow you're editing into a pinned `_Backup` location — a per-workflow ring buffer you size yourself (every 1–60 min, keep 1–50). Plus a one-time heads-up if ComfyUI's AutoSave is set to silently overwrite the file you have open. |
 | ⭐ **Favorites & notes** | Star workflows and add per-workflow descriptions, all stored as tiny sidecar files. |
 | 🧰 **Full file ops** | New / rename / duplicate / cut-copy-paste / move / delete — folders too — with a confirmation on every delete. |
 | 🖱️ **One-click editors** | In List view, a single click on the Description or Tags cell opens the corresponding editor immediately. |
-| 🎁 **Starter pack** | 43 ready-made thumbnails included so a fresh library looks great immediately. |
+| 🎁 **Starter pack** | A growing set of ready-made 800×450 thumbnails included so a fresh library looks great immediately. |
 
 ---
 

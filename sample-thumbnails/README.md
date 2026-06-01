@@ -1,7 +1,7 @@
 # Starter thumbnails
 
-54 ready-to-use **800×450 JPEG** thumbnails, already in G-Workflows' native
-format, so a fresh library looks good immediately.
+A growing set of ready-to-use **800×450 JPEG** thumbnails, already in
+G-Workflows' native format, so a fresh library looks good immediately.
 
 They're named after common workflow types (e.g. `LTX-T2V.jpg`,
 `ZImageTurbo.jpg`, `NanoBanana.jpg`, `Background_Removal.jpg`).
