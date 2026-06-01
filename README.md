@@ -90,6 +90,26 @@ single selected workflow. Closing a tab whose file you just overwrote via
 Save no longer pesters you with "Save changes?" — the panel correctly
 clears ComfyUI's native dirty flag after writing.
 
+### Auto-backup & AutoSave safety
+
+ComfyUI's built-in **Auto Save** ("after delay") quietly rewrites the workflow
+you have *open* to its own file as you edit — so opening a workflow to derive a
+variant can overwrite the **original** before you ever Save As. On first run,
+G-Workflows shows a one-time notice (once per install) explaining this and lets
+you disable Auto Save with one click. You can change it anytime in **ComfyUI
+Settings → Comfy → Workflow → Auto Save**.
+
+As a safety net, **⚙ Settings** in the panel toolbar enables G-Workflows'
+own rolling **auto-backup**: on a timer (every **1–60 minutes**) it snapshots
+the workflow you're editing into a single, pinned **`_Backup`** location at the
+top of the locations list (`user/default/_Backup`, kept *outside* your
+workflows). Backups are named after the workflow — `MyWorkflow.bak001.json`,
+`.bak002.json`, … — as a per-workflow ring buffer of **N** (1–50): once full,
+the oldest is recycled. Identical snapshots are skipped, and your original file
+is **never** written by the backup — only explicit Save / Save As touches it.
+To **restore**, open a backup from `_Backup` (it loads as an unsaved copy) and
+**Save As** over the original.
+
 ### Favorites & bulk operations
 
 Star your go-to workflows and filter to just those with a single click.

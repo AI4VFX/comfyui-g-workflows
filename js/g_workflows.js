@@ -6,6 +6,9 @@ import { app } from "../../scripts/app.js";
 
 const API = "/comfy_greg_templates";
 const LS_KEY = "comfy_greg_templates_v1";
+// Special built-in auto-backup location. Must match BACKUP_ROOT_ID in __init__.py.
+// Pinned at the top of the locations list, shared, and not user-removable.
+const BACKUP_ROOT_ID = "__backup__";
 
 // Root-scoped key for the `expanded` Set: a folder's expand state belongs to
 // the root it lives in (two roots can have same-named subfolders). "|" is
@@ -60,6 +63,9 @@ const state = {
   tagSort: "default",         // tag pane sort: "default" (user order) | "asc" | "desc"
   tagOrder: [],               // ordered tag names when tagSort === "default";
                               // new tags appended, drag-drop reorder rewrites this
+  autoBackupEnabled: false,        // master toggle for the rolling auto-backup
+  autoBackupIntervalMinutes: 5,    // backup cadence in minutes (1–60)
+  autoBackupCountPerFile: 10,      // ring-buffer size per workflow (1–50)
 };
 
 function loadLS() {
@@ -124,6 +130,15 @@ function loadLS() {
         .map((t) => t.trim().toLowerCase())
         .filter((t) => { if (seen.has(t)) return false; seen.add(t); return true; });
     }
+    if (typeof parsed.autoBackupEnabled === "boolean") state.autoBackupEnabled = parsed.autoBackupEnabled;
+    if (typeof parsed.autoBackupIntervalMinutes === "number"
+        && parsed.autoBackupIntervalMinutes >= 1 && parsed.autoBackupIntervalMinutes <= 60) {
+      state.autoBackupIntervalMinutes = Math.round(parsed.autoBackupIntervalMinutes);
+    }
+    if (typeof parsed.autoBackupCountPerFile === "number"
+        && parsed.autoBackupCountPerFile >= 1 && parsed.autoBackupCountPerFile <= 50) {
+      state.autoBackupCountPerFile = Math.round(parsed.autoBackupCountPerFile);
+    }
   } catch (_) {}
 }
 function saveLS() {
@@ -145,6 +160,9 @@ function saveLS() {
       draftTags: Array.from(state.draftTags),
       tagSort: state.tagSort,
       tagOrder: state.tagOrder,
+      autoBackupEnabled: state.autoBackupEnabled,
+      autoBackupIntervalMinutes: state.autoBackupIntervalMinutes,
+      autoBackupCountPerFile: state.autoBackupCountPerFile,
     }));
   } catch (_) {}
 }
@@ -1145,6 +1163,15 @@ const CSS = `
 .gt-modal .picker-tree { max-height:260px; overflow:auto; background:#13161a; border:1px solid #303540; border-radius:4px; padding:4px; }
 .gt-modal .label-row { margin-bottom:6px; font-size:12px; opacity:.75; }
 .gt-modal .preview { margin-top:8px; font-size:11px; opacity:.6; word-break:break-all; }
+.gt-modal.gt-settings-modal h3 { font-size:17px; }
+.gt-modal .gt-settings-group { display:flex; flex-direction:column; gap:8px; padding:14px 0; border-bottom:1px solid #303540; }
+.gt-modal .gt-settings-group:last-of-type { border-bottom:none; }
+.gt-modal .gt-settings-group > label { font-size:15px; color:#dbe2ea; display:flex; align-items:center; gap:8px; cursor:pointer; }
+.gt-modal .gt-settings-group input[type=checkbox] { width:17px; height:17px; cursor:pointer; }
+.gt-modal .gt-settings-row { display:flex; align-items:center; gap:10px; }
+.gt-modal .gt-settings-row input[type=range] { flex:1; cursor:pointer; height:6px; }
+.gt-modal input.gt-settings-num { width:74px; background:#13161a; color:#dbe2ea; border:1px solid #3a414e; border-radius:4px; padding:6px 8px; font-size:15px; }
+.gt-modal .gt-settings-hint { font-size:13px; opacity:.65; line-height:1.5; }
 .gt-toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:#1d2128; border:1px solid #3b82f6; color:#fff; padding:8px 16px; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,.5); z-index:10001; font-size:12px; }
 .gt-zoom { position:absolute; right:14px; bottom:12px; z-index:50; display:flex; align-items:center; gap:8px; background:rgba(29,33,40,.9); border:1px solid #3a414e; border-radius:6px; padding:6px 10px; font-size:11px; color:#cbd5e1; box-shadow:0 4px 14px rgba(0,0,0,.45); }
 .gt-zoom input[type=range] { width:120px; cursor:pointer; }
@@ -1708,7 +1735,7 @@ async function openFolderBrowser() {
 }
 
 async function removeRoot(rootId) {
-  if (rootId === "default") return;
+  if (rootId === "default" || rootId === BACKUP_ROOT_ID) return;
   const r = rootEntry(rootId);
   const label = r ? (r.label || r.abspath) : rootId;
   const ok = await confirmModal("Remove location",
@@ -1912,6 +1939,9 @@ function renderToolbar() {
   }, { primary: state.favoritesOnly });
   favBtn.title = "Show only favorited workflows (★)";
   toolbarEl.appendChild(favBtn);
+  const settingsBtn = mk("⚙ Settings", openSettingsModal, { primary: state.autoBackupEnabled });
+  settingsBtn.title = "Auto-backup settings (rolling snapshots of the open workflow)";
+  toolbarEl.appendChild(settingsBtn);
   toolbarEl.appendChild(el("div", { class: "gt-spacer" }));
   if (!state.listView) {
     const cs = Array.isArray(state.cardSort) ? state.cardSort : [];
@@ -2166,6 +2196,7 @@ function renderTagPane() {
 function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
   const rootId = rootObj.id;
   const isDefault = rootId === "default";
+  const isBackup = rootId === BACKUP_ROOT_ID;
   const offline = isRoot && rootObj.available === false;
   const active = state.rootId === rootId && state.currentPath === node.path;
   const eHere = ekey(rootId, node.path);
@@ -2180,7 +2211,7 @@ function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
   const twirl = el("span", { class: "twirl" });
   twirl.textContent = offline ? "⚠" : (hasChildren ? (isExpanded ? "▾" : "▸") : "·");
   const icon = el("span", { class: "icon" });
-  icon.textContent = isRoot && !isDefault ? "🔗" : "📁";
+  icon.textContent = isBackup ? "💾" : (isRoot && !isDefault ? "🔗" : "📁");
   const label = el("span", { class: "label" });
   label.textContent = isRoot
     ? (isDefault ? "workflows" : (rootObj.label || rootObj.abspath))
@@ -2209,7 +2240,7 @@ function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
       items.push({ label: "Rename folder", action: () => renameFolder(rootId, node.path) });
       items.push({ label: "Delete folder", danger: true, action: () => deleteFolder(rootId, node.path) });
     }
-    if (isRoot && !isDefault) {
+    if (isRoot && !isDefault && !isBackup) {
       items.push("sep");
       items.push({ label: "Remove this location", danger: true, action: () => removeRoot(rootId) });
     }
@@ -3001,6 +3032,199 @@ async function mountInto(host) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Auto-backup — rolling snapshots of the OPEN workflow into the pinned _Backup
+// location. Runs on a timer regardless of whether the panel is open, so work is
+// protected even when AutoSave is off. The original file is never written here.
+// ─────────────────────────────────────────────────────────────────────────────
+let backupTimer = null;
+let lastBackupHash = null;   // cheap "changed since last tick?" guard to skip POSTs
+
+function _quickHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return h + ":" + s.length;
+}
+
+// Name the snapshot after the ACTIVE workflow (the tab whose graph captureWorkflow
+// serializes), read straight from the store — NOT state.loadedSourcePath, which
+// goes stale when the user switches ComfyUI tabs (tab-switch skips loadGraphData).
+function activeOpenWorkflowName() {
+  try {
+    const ws = app.extensionManager && app.extensionManager.workflow;
+    const aw = ws && (ws.activeWorkflow
+      || (typeof ws.getActiveWorkflow === "function" && ws.getActiveWorkflow()));
+    if (aw) {
+      const raw = aw.path || aw.filename || aw.name || "";
+      const n = baseName(String(raw).replace(/\\/g, "/")).trim();
+      if (n) return n.toLowerCase().endsWith(".json") ? n : n + ".json";
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function backupTick() {
+  if (!state.autoBackupEnabled) return;
+  const name = activeOpenWorkflowName();
+  if (!name) return;                                   // nothing named open
+  if (/\.bak\d{3}\.json$/i.test(name)) return;         // never back up a backup
+  if (state.loadedRootId === BACKUP_ROOT_ID) return;   // opened from _Backup → skip
+  const graph = captureWorkflow();
+  if (!graph || !Array.isArray(graph.nodes) || graph.nodes.length === 0) return;
+  let text;
+  try { text = JSON.stringify(graph); } catch (_) { return; }
+  const h = _quickHash(text);
+  if (h === lastBackupHash) return;                    // unchanged since last tick
+  try {
+    const r = await apiPost("/backup", {
+      name,
+      workflow: graph,
+      countPerFile: state.autoBackupCountPerFile,
+      root: BACKUP_ROOT_ID,
+    });
+    lastBackupHash = h;
+    if (state.panelMounted && state.rootId === BACKUP_ROOT_ID && !(r && r.skipped)) {
+      await refreshTree(); renderAll();   // user is viewing _Backup → reflect the new file
+    }
+  } catch (e) {
+    console.warn("[G-Workflows] auto-backup failed", e);
+  }
+}
+
+function startBackupTimer() {
+  stopBackupTimer();
+  if (!state.autoBackupEnabled) return;
+  const mins = Math.max(1, Math.min(60, state.autoBackupIntervalMinutes || 5));
+  backupTimer = setInterval(backupTick, mins * 60 * 1000);
+}
+function stopBackupTimer() {
+  if (backupTimer) { clearInterval(backupTimer); backupTimer = null; }
+}
+function restartBackupTimer() { startBackupTimer(); }
+
+async function openSettingsModal() {
+  const { bg, body, row } = buildModalShell("G-Workflows — Settings");
+  try { bg.querySelector(".gt-modal").classList.add("gt-settings-modal"); } catch (_) {}
+
+  // Enable toggle
+  const grpEnable = el("div", { class: "gt-settings-group" });
+  const enLabel = el("label");
+  const enCb = el("input", { attrs: { type: "checkbox" } });
+  enCb.checked = !!state.autoBackupEnabled;
+  enLabel.appendChild(enCb);
+  enLabel.appendChild(doc.createTextNode(" Enable automatic backups"));
+  grpEnable.appendChild(enLabel);
+  grpEnable.appendChild(el("div", { class: "gt-settings-hint", text:
+    "When on, this stays active across every session until you turn it off. " +
+    "G-Workflows keeps rolling snapshots of whichever workflow you're editing in the " +
+    "pinned “_Backup” location. Your original files are never written by this — only " +
+    "explicit Save / Save As writes them." }));
+  body.appendChild(grpEnable);
+
+  // Interval (1–60 min): range + linked number
+  const grpInt = el("div", { class: "gt-settings-group" });
+  const intLabel = el("label");
+  const setIntLabel = (v) => { intLabel.textContent = "Back up every " + v + " minute" + (v === 1 ? "" : "s"); };
+  const intRange = el("input", { attrs: { type: "range", min: "1", max: "60", step: "1" } });
+  const intNum = el("input", { class: "gt-settings-num", attrs: { type: "number", min: "1", max: "60", step: "1" } });
+  const startInt = Math.max(1, Math.min(60, state.autoBackupIntervalMinutes || 5));
+  intRange.value = String(startInt); intNum.value = String(startInt); setIntLabel(startInt);
+  const syncInt = (v) => { v = Math.max(1, Math.min(60, Math.round(v) || 1)); intRange.value = String(v); intNum.value = String(v); setIntLabel(v); };
+  intRange.addEventListener("input", () => syncInt(parseInt(intRange.value, 10)));
+  intNum.addEventListener("input", () => syncInt(parseInt(intNum.value, 10)));
+  const intRow = el("div", { class: "gt-settings-row" });
+  intRow.appendChild(intRange); intRow.appendChild(intNum);
+  grpInt.appendChild(intLabel); grpInt.appendChild(intRow);
+  body.appendChild(grpInt);
+
+  // Count (1–50)
+  const grpCnt = el("div", { class: "gt-settings-group" });
+  grpCnt.appendChild(el("label", { text: "Backups to keep per workflow (oldest recycled)" }));
+  const cntNum = el("input", { class: "gt-settings-num", attrs: { type: "number", min: "1", max: "50", step: "1" } });
+  cntNum.value = String(Math.max(1, Math.min(50, state.autoBackupCountPerFile || 10)));
+  grpCnt.appendChild(cntNum);
+  body.appendChild(grpCnt);
+
+  body.appendChild(el("div", { class: "gt-settings-hint", text:
+    "Backups go to the pinned “_Backup” location at the top of the list, named " +
+    "<workflow>.bak001.json, .bak002.json … To restore, open a backup there and use Save As over the original." }));
+
+  const cancel = el("button"); cancel.textContent = "Cancel";
+  const ok = el("button", { class: "primary" }); ok.textContent = "Save";
+  row.appendChild(cancel); row.appendChild(ok);
+
+  const result = await modalPromise(bg, row, (close) => {
+    cancel.addEventListener("click", () => close(null));
+    ok.addEventListener("click", () => close({
+      enabled: !!enCb.checked,
+      interval: Math.max(1, Math.min(60, Math.round(parseInt(intNum.value, 10)) || 5)),
+      count: Math.max(1, Math.min(50, Math.round(parseInt(cntNum.value, 10)) || 10)),
+    }));
+  });
+  if (!result) return;
+  state.autoBackupEnabled = result.enabled;
+  state.autoBackupIntervalMinutes = result.interval;
+  state.autoBackupCountPerFile = result.count;
+  saveLS();
+  restartBackupTimer();
+  if (state.panelMounted) renderToolbar();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// First-run notice: AutoSave silently overwrites the OPEN workflow. Offer to
+// disable it (consent, not silent). Shown at most once per install (backend
+// marker file via /meta).
+// ─────────────────────────────────────────────────────────────────────────────
+async function autosaveNoticeModal() {
+  const { bg, body, row } = buildModalShell("G-Workflows — protect your workflows");
+  const pre = el("pre");
+  pre.textContent =
+    "ComfyUI's “Auto Save” overwrites the workflow you have OPEN to its file as you edit.\n\n" +
+    "So if you open a workflow to make a variant with a new name, Auto Save can overwrite the ORIGINAL before you " +
+    "Save As — losing it.\n\n" +
+    "Recommended: turn Auto Save off. G-Workflows can keep its own rolling backups (enable in " +
+    "⚙ Settings) for crash-safety, and your file then only changes when you explicitly Save.\n\n" +
+    "You can change this anytime in ComfyUI Settings → Comfy → Workflow → Auto Save.";
+  body.appendChild(pre);
+  const keep = el("button"); keep.textContent = "Keep Auto Save on";
+  const disable = el("button", { class: "primary" }); disable.textContent = "Disable Auto Save (recommended)";
+  row.appendChild(keep); row.appendChild(disable);
+  setTimeout(() => { try { disable.focus(); } catch (_) {} }, 0);
+  return modalPromise(bg, row, (close) => {
+    keep.addEventListener("click", () => close("keep"));
+    disable.addEventListener("click", () => close("disable"));
+  });
+}
+
+async function maybeShowAutoSaveNotice() {
+  // Already shown once on this install?
+  try {
+    const meta = await apiGet("/meta");
+    if (meta && meta.autosaveNoticeShown) return;
+  } catch (_) { return; }   // backend not ready → try again next launch, don't nag
+  // Only act when we can positively read that AutoSave is enabled.
+  let cur = null;
+  try {
+    const sm = app.extensionManager && app.extensionManager.setting;
+    if (sm && typeof sm.get === "function") cur = sm.get("Comfy.Workflow.AutoSave");
+  } catch (_) {}
+  if (!cur) return;                         // unknown → don't nag, retry next launch
+  if (cur === "off") {                      // already safe → record and never ask
+    try { await apiPost("/meta", { autosaveNoticeShown: true }); } catch (_) {}
+    return;
+  }
+  let choice = null;
+  try { choice = await autosaveNoticeModal(); } catch (_) {}
+  if (choice === "disable") {
+    try {
+      const sm = app.extensionManager && app.extensionManager.setting;
+      if (sm && typeof sm.set === "function") await sm.set("Comfy.Workflow.AutoSave", "off");
+      toast("Auto Save disabled. Enable G-Workflows backups in ⚙ Settings.");
+    } catch (e) { console.warn("[G-Workflows] could not disable AutoSave", e); }
+  }
+  try { await apiPost("/meta", { autosaveNoticeShown: true }); } catch (_) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Extension registration
 // ─────────────────────────────────────────────────────────────────────────────
 app.registerExtension({
@@ -3020,7 +3244,10 @@ app.registerExtension({
     injectCSS();
     hookLoadGraph();
     addTopbarButton();
-    console.log("[G-Workflows] v1.0 ready");
+    loadLS();                 // settings (incl. auto-backup) before the timer starts
+    startBackupTimer();       // runs regardless of whether the panel is open
+    setTimeout(() => { maybeShowAutoSaveNotice(); }, 1500);  // let stores/back-end settle
+    console.log("[G-Workflows] ready");
   },
 });
 

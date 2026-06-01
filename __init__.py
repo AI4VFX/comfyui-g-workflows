@@ -66,9 +66,16 @@ TEMPLATES_DIR = os.path.normpath(os.path.join(_BASE, "user", "default", "workflo
 # Server-side allowlist of extra workflow roots. Lives in ComfyUI's writable
 # per-instance user dir (not inside any tree, survives custom-node reinstalls).
 ROOTS_CONFIG = os.path.normpath(os.path.join(_BASE, "user", "g_workflows_roots.json"))
+# Once-per-install marker file (first-run AutoSave notice, future flags).
+META_CONFIG = os.path.normpath(os.path.join(_BASE, "user", "g_workflows_meta.json"))
 DEFAULT_ROOT_ID = "default"
-# id -> {"id","label","abspath","available"}. The default entry is always
-# present and first; extra entries are loaded from ROOTS_CONFIG.
+# Special, built-in, pinned auto-backup location. A SIBLING of workflows
+# (outside it) so backups never show up inside the user's workflow tree.
+# Single + shared for every root; not persisted to ROOTS_CONFIG; not removable.
+BACKUP_ROOT_ID = "__backup__"
+BACKUP_DIR = os.path.normpath(os.path.join(_BASE, "user", "default", "_Backup"))
+# id -> {"id","label","abspath","available"}. The backup entry is always first
+# (pinned at the top), then the default entry; extra entries from ROOTS_CONFIG.
 _ROOTS = {}
 
 THUMB_EXTS = (".png", ".jpg", ".jpeg", ".webp")
@@ -91,6 +98,119 @@ REMOVED_SUFFIX = ".removed"
 
 def _ensure_root():
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
+
+
+def _ensure_backup_root():
+    """Create the shared _Backup dir if missing; return its absolute path."""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    return BACKUP_DIR
+
+
+def _read_meta():
+    """Read the once-per-install marker file. Missing/corrupt ⇒ {}."""
+    try:
+        with open(META_CONFIG, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_meta(d):
+    """Atomically persist the marker file."""
+    os.makedirs(os.path.dirname(META_CONFIG), exist_ok=True)
+    tmp = META_CONFIG + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, META_CONFIG)
+
+
+def _backup_index(filename, stem):
+    """If filename == '<stem>.bakNNN.json' (stem matched case-insensitively),
+    return the integer NNN; otherwise None."""
+    if not filename.lower().endswith(WORKFLOW_EXT):
+        return None
+    prefix = stem + ".bak"
+    if filename[: len(prefix)].lower() != prefix.lower():
+        return None
+    mid = filename[len(prefix): -len(WORKFLOW_EXT)]
+    if len(mid) == 3 and mid.isdigit():
+        return int(mid)
+    return None
+
+
+def _list_backups(stem):
+    """Return [(abspath, mtime, index)] for <stem>.bakNNN.json in BACKUP_DIR,
+    sorted by mtime ascending (oldest first)."""
+    out = []
+    try:
+        names = os.listdir(BACKUP_DIR)
+    except OSError:
+        return out
+    for name in names:
+        idx = _backup_index(name, stem)
+        if idx is None:
+            continue
+        full = os.path.join(BACKUP_DIR, name)
+        if not os.path.isfile(full):
+            continue
+        try:
+            mt = os.path.getmtime(full)
+        except OSError:
+            mt = 0
+        out.append((full, mt, idx))
+    out.sort(key=lambda t: t[1])
+    return out
+
+
+def _write_rolling_backup(stem, new_text, n):
+    """Write new_text as a rolling <stem>.bakNNN.json in BACKUP_DIR.
+
+    Per-stem ring buffer of n (clamped 1..50): fill the lowest free slot in
+    1..n; once full, overwrite the OLDEST by mtime (reusing its filename). Skip
+    entirely if identical to the newest existing backup. After writing, prune to
+    the n most-recent by mtime (so lowering n cleans up). Returns a dict:
+    {"skipped": True} | {"file": name, "removed": [names]}.
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 10
+    n = max(1, min(50, n))
+    backup_dir = _ensure_backup_root()
+
+    existing = _list_backups(stem)
+    if existing:
+        try:
+            with open(existing[-1][0], "r", encoding="utf-8") as f:
+                if f.read() == new_text:
+                    return {"skipped": True}
+        except OSError:
+            pass
+
+    if len(existing) < n:
+        used = {idx for (_p, _m, idx) in existing}
+        slot = next(i for i in range(1, n + 1) if i not in used)
+        target = os.path.join(backup_dir, "{}.bak{:03d}.json".format(stem, slot))
+    else:
+        target = existing[0][0]   # overwrite the oldest by mtime
+
+    with open(target, "w", encoding="utf-8") as f:
+        f.write(new_text)
+
+    removed = []
+    after = _list_backups(stem)
+    if len(after) > n:
+        target_abs = os.path.abspath(target)
+        for (p, _m, _i) in after[: len(after) - n]:
+            if os.path.abspath(p) == target_abs:
+                continue
+            try:
+                os.remove(p)
+                removed.append(os.path.basename(p))
+            except OSError:
+                pass
+    return {"file": os.path.basename(target), "removed": removed}
 
 
 def _canon(p):
@@ -123,8 +243,16 @@ def _default_root_entry():
             "abspath": TEMPLATES_DIR, "available": True}
 
 
+def _backup_root_entry():
+    return {"id": BACKUP_ROOT_ID, "label": "_Backup",
+            "abspath": BACKUP_DIR, "available": True}
+
+
 def _seed_roots():
     _ROOTS.clear()
+    # Backup root first ⇒ it renders pinned at the TOP of the locations list
+    # (route_tree preserves dict insertion order).
+    _ROOTS[BACKUP_ROOT_ID] = _backup_root_entry()
     _ROOTS[DEFAULT_ROOT_ID] = _default_root_entry()
 
 
@@ -142,6 +270,7 @@ def _load_roots():
         if not isinstance(entries, list):
             return
         default_canon = _canon(TEMPLATES_DIR)
+        backup_canon = _canon(BACKUP_DIR)
         for ent in entries:
             if not isinstance(ent, dict):
                 continue
@@ -150,10 +279,10 @@ def _load_roots():
                 continue
             ap = os.path.normpath(ap)
             rid = _root_id_for_path(ap)              # id is derived; self-heals
-            if rid == DEFAULT_ROOT_ID or rid in _ROOTS:
+            if rid == DEFAULT_ROOT_ID or rid == BACKUP_ROOT_ID or rid in _ROOTS:
                 continue                             # reserved / duplicate
-            if _canon(ap) == default_canon:
-                continue                             # never alias the default
+            if _canon(ap) == default_canon or _canon(ap) == backup_canon:
+                continue                             # never alias default/backup
             label = os.path.basename(ap.rstrip("/\\")) or ap
             _ROOTS[rid] = {"id": rid, "label": label, "abspath": ap,
                            "available": os.path.isdir(ap)}
@@ -166,7 +295,7 @@ def _save_roots():
     """Atomically persist the non-default registry. Raises on failure."""
     payload = {"version": 1, "roots": [
         {"id": r["id"], "label": r["label"], "abspath": r["abspath"]}
-        for rid, r in _ROOTS.items() if rid != DEFAULT_ROOT_ID
+        for rid, r in _ROOTS.items() if rid not in (DEFAULT_ROOT_ID, BACKUP_ROOT_ID)
     ]}
     os.makedirs(os.path.dirname(ROOTS_CONFIG), exist_ok=True)
     tmp = ROOTS_CONFIG + ".tmp"
@@ -178,6 +307,8 @@ def _save_roots():
 def _base_of(root_id):
     """Absolute base dir for a root id. Unknown id ⇒ 400 (never silent
     fallback to default — a stale client must not write the wrong tree)."""
+    if root_id == BACKUP_ROOT_ID:
+        return _ensure_backup_root()   # built-in; resolvable even before seed
     entry = _ROOTS.get(root_id or DEFAULT_ROOT_ID)
     if not entry:
         raise web.HTTPBadRequest(reason="unknown root")
@@ -489,6 +620,7 @@ try:
     async def route_tree(request):
         try:
             _ensure_root()
+            _ensure_backup_root()
             _load_roots()
             roots_out = []
             for rid, r in _ROOTS.items():
@@ -1281,8 +1413,8 @@ try:
             _load_roots()
             data = await request.json()
             rid = str(data.get("id", ""))
-            if rid == DEFAULT_ROOT_ID:
-                return _bad("the default location cannot be removed")
+            if rid in (DEFAULT_ROOT_ID, BACKUP_ROOT_ID):
+                return _bad("this location cannot be removed")
             if rid not in _ROOTS:
                 return _ok({"id": rid})   # idempotent no-op
             _ROOTS.pop(rid, None)
@@ -1296,12 +1428,62 @@ try:
         except Exception as e:
             return _bad(str(e), 500)
 
+    @PromptServer.instance.routes.get("/comfy_greg_templates/meta")
+    async def route_meta_get(request):
+        """Return once-per-install flags (currently the AutoSave notice)."""
+        try:
+            m = _read_meta()
+            return _ok({"autosaveNoticeShown": bool(m.get("autosaveNoticeShown"))})
+        except Exception as e:
+            return _bad(str(e), 500)
+
+    @PromptServer.instance.routes.post("/comfy_greg_templates/meta")
+    async def route_meta_set(request):
+        """Body: {autosaveNoticeShown: bool}. Persists the marker so the
+        first-run notice never reappears."""
+        try:
+            data = await request.json()
+            m = _read_meta()
+            if "autosaveNoticeShown" in data:
+                m["autosaveNoticeShown"] = bool(data.get("autosaveNoticeShown"))
+            _write_meta(m)
+            return _ok({"autosaveNoticeShown": bool(m.get("autosaveNoticeShown"))})
+        except Exception as e:
+            return _bad(str(e), 500)
+
+    @PromptServer.instance.routes.post("/comfy_greg_templates/backup")
+    async def route_backup(request):
+        """Body: {name: 'MyWorkflow.json', workflow: {...}, countPerFile: 10}.
+        Writes a rolling snapshot <stem>.bakNNN.json into the shared _Backup
+        dir: a per-stem ring buffer of N (overwrite the oldest by mtime once
+        full), skipping a write that is identical to the newest backup."""
+        try:
+            data = await request.json()
+            workflow = data.get("workflow")
+            if workflow is None:
+                return _bad("missing workflow")
+            stem = os.path.basename(str(data.get("name") or "").strip())
+            if stem.lower().endswith(WORKFLOW_EXT):
+                stem = stem[: -len(WORKFLOW_EXT)]
+            if not stem:
+                return _bad("missing name")
+            if ("/" in stem or "\\" in stem or stem in (".", "..")
+                    or any(ch in FORBIDDEN_NAME_CHARS for ch in stem)):
+                return _bad("invalid name")
+            new_text = json.dumps(workflow, indent=2, ensure_ascii=False)
+            return _ok(_write_rolling_backup(stem, new_text, data.get("countPerFile", 10)))
+        except web.HTTPException:
+            raise
+        except Exception as e:
+            return _bad(str(e), 500)
+
     print("[G-Workflows] Routes registered. Default root: {} | extra roots: {}"
-          .format(TEMPLATES_DIR, len(_ROOTS) - 1))
+          .format(TEMPLATES_DIR, max(0, len(_ROOTS) - 2)))
 
 except ImportError:
     print("[G-Workflows] Warning: PromptServer not available — API routes skipped.")
 
 _ensure_root()
+_ensure_backup_root()
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
