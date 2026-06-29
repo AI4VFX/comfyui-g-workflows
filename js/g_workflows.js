@@ -43,7 +43,8 @@ const state = {
   loadingFromGW: false,     // guards loadGraphData wrapper
   root: "",                   // legacy: current root's abspath (list-view Path col)
   panelMounted: false,
-  cardScale: 1.5,             // workflow card zoom (1.0–2.5; also scales List-view font)
+  gridScale: 1.5,             // Thumbnail (grid) card zoom (1.0–2.5)
+  listScale: 1.0,             // List-view text zoom (1.0–2.5; base 12px × scale). Independent of gridScale.
   recurseSubfolders: false,   // grid shows currentPath + all descendant workflows flattened
   listView: false,            // grid renders as a details-style list (Name/Date/Desc/Path/Size)
   listColW: [220, 170, 300, 200, 260, 90],   // px widths: Name,Date,Desc,Tags,Path,Size (resizable)
@@ -85,7 +86,11 @@ function loadLS() {
     }
     state.expanded.add(ekey("default", ""));
     state.expanded.add(ekey(state.rootId, ""));
-    if (typeof parsed.cardScale === "number") state.cardScale = Math.min(2.5, Math.max(1, parsed.cardScale));
+    const clampScale = (n) => Math.min(2.5, Math.max(1, n));
+    // Legacy single cardScale → seed gridScale (List view now zooms independently).
+    if (typeof parsed.cardScale === "number") state.gridScale = clampScale(parsed.cardScale);
+    if (typeof parsed.gridScale === "number") state.gridScale = clampScale(parsed.gridScale);
+    if (typeof parsed.listScale === "number") state.listScale = clampScale(parsed.listScale);
     if (typeof parsed.recurseSubfolders === "boolean") state.recurseSubfolders = parsed.recurseSubfolders;
     if (typeof parsed.listView === "boolean") state.listView = parsed.listView;
     if (typeof parsed.favoritesOnly === "boolean") state.favoritesOnly = parsed.favoritesOnly;
@@ -147,7 +152,8 @@ function saveLS() {
       rootId: state.rootId,
       expanded: Array.from(state.expanded),
       currentPath: state.currentPath,
-      cardScale: state.cardScale,
+      gridScale: state.gridScale,
+      listScale: state.listScale,
       recurseSubfolders: state.recurseSubfolders,
       listView: state.listView,
       favoritesOnly: state.favoritesOnly,
@@ -281,7 +287,7 @@ async function captureThumbBase64() {
   } catch { return null; }
 }
 
-async function doSaveTo(relPath, overwrite, rootId) {
+async function doSaveTo(relPath, overwrite, rootId, rebindActive) {
   rootId = rootId || state.rootId;
   // Saves never touch sidecar thumbnails. Use the right-click menu
   // ("Capture thumbnail from canvas", "Set thumbnail…", drag-drop)
@@ -307,16 +313,32 @@ async function doSaveTo(relPath, overwrite, rootId) {
         if (aw) {
           const awPath = String(aw.path || "").replace(/\\/g, "/");
           const ourPath = "workflows/" + String(r.path).replace(/\\/g, "/");
-          if (awPath && awPath === ourPath) {
-            const json = JSON.stringify(workflow);
+          const json = JSON.stringify(workflow);
+          // Sync the active workflow's content/originalContent and reset its
+          // change tracker so close-tab / switch-tab won't prompt "Save changes?".
+          const markClean = () => {
             try { aw.content = json; } catch (_) {}
             try { aw.originalContent = json; } catch (_) {}
             try { aw.changeTracker && typeof aw.changeTracker.reset === "function" && aw.changeTracker.reset(); } catch (_) {}
             try { aw.isModified = false; } catch (_) {}
+          };
+          if (awPath && awPath === ourPath) {
+            markClean();   // plain Save / overwrite of the file already open
+          } else if (rebindActive && typeof aw.updatePath === "function") {
+            // Save As to a NEW name: re-point the open tab's identity to the new
+            // file IN PLACE — no graph reload (undo/viewport preserved) and no
+            // disk move (the old file stays). Mirrors native Save As: the tab
+            // retitles and future plain Saves target the new path. updatePath
+            // recomputes path/filename/key off the new path.
+            try { aw.updatePath(ourPath); } catch (_) {}
+            // A never-saved (temporary) graph reports size === -1, which keeps
+            // isPersisted false; nudge it so the tab no longer reads as unsaved.
+            try { if (aw.size === -1) aw.size = json.length; } catch (_) {}
+            markClean();
           }
         }
       } catch (e) {
-        console.warn("[G-Workflows] could not clear ComfyUI dirty flag after save", e);
+        console.warn("[G-Workflows] could not rebind / clear ComfyUI dirty flag after save", e);
       }
     }
     await refreshTree();
@@ -926,7 +948,8 @@ async function clickSaveAs() {
     const ok = await confirmModal("Overwrite?", `"${target}" already exists. Replace it?`);
     if (!ok) return;
   }
-  await doSaveTo(target, true, state.rootId);
+  // rebindActive=true: retitle the open tab + redirect future Saves to this new file.
+  await doSaveTo(target, true, state.rootId, true);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1068,7 +1091,9 @@ const CSS = `
 .gt-tagpane .gt-tpempty { padding:8px 6px; font-size:11px; opacity:.55; font-style:italic; }
 .gt-grid-wrap { flex:1; overflow:auto; padding:8px 8px 52px 8px; }
 .gt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
-.gt-breadcrumb { padding:4px 4px 8px 4px; opacity:.75; font-size:12px; }
+.gt-breadcrumb { padding:4px 4px 8px 4px; opacity:.75; font-size:12px; display:flex; align-items:center; gap:8px; }
+.gt-breadcrumb .gt-bc-path { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-breadcrumb .gt-count { margin-left:auto; flex:none; opacity:.85; font-variant-numeric:tabular-nums; }
 .gt-breadcrumb .crumb { cursor:pointer; }
 .gt-breadcrumb .crumb:hover { text-decoration:underline; }
 .gt-tnode { display:flex; align-items:center; padding:3px 4px; gap:4px; border-radius:4px; cursor:pointer; user-select:none; }
@@ -1797,12 +1822,31 @@ function showMenu(x, y, items) {
 // Rendering
 // ─────────────────────────────────────────────────────────────────────────────
 let panelEl = null, toolbarEl = null, treeEl = null, gridEl = null, breadcrumbEl = null;
-let zoomSlider = null, zoomLabel = null;
+let zoomSlider = null, zoomLabel = null, breadcrumbCountEl = null;
+
+// Right-aligned count in the breadcrumb row: total workflows currently shown
+// (after folder/favorites/tag/search filtering). Set by renderGrid; blank when
+// the grid is empty. Shows in both Thumbnail and List views.
+function updateDisplayedCount(n) {
+  if (!breadcrumbCountEl) return;
+  breadcrumbCountEl.textContent = n > 0 ? (n + (n === 1 ? " workflow" : " workflows")) : "";
+}
 function applyCardScale() {
   if (gridEl) gridEl.style.gridTemplateColumns =
-    "repeat(auto-fill,minmax(" + Math.round(CARD_BASE * state.cardScale) + "px,1fr))";
-  if (gridEl) gridEl.style.setProperty("--gt-fav-scale", String(Math.max(1, state.cardScale)));
-  if (zoomLabel) zoomLabel.textContent = Math.round(state.cardScale * 100) + "%";
+    "repeat(auto-fill,minmax(" + Math.round(CARD_BASE * state.gridScale) + "px,1fr))";
+  if (gridEl) gridEl.style.setProperty("--gt-fav-scale", String(Math.max(1, state.gridScale)));
+}
+
+// The single lower-right "Size" slider drives whichever view is active:
+// gridScale for Thumbnail view, listScale for List view — persisted apart so
+// each view keeps its own zoom. activeScale() reads/writes the right one and
+// syncZoom() pushes the active value back into the slider + % readout.
+const SCALE_DEFAULTS = { grid: 1.5, list: 1.0 };
+function activeScale()     { return state.listView ? state.listScale : state.gridScale; }
+function setActiveScale(v) { if (state.listView) state.listScale = v; else state.gridScale = v; }
+function syncZoom() {
+  if (zoomSlider) zoomSlider.value = String(activeScale());
+  if (zoomLabel)  zoomLabel.textContent = Math.round(activeScale() * 100) + "%";
 }
 
 // List view single source of truth for column widths: push state.listColW into
@@ -1819,11 +1863,11 @@ function applyListCols() {
   gridEl.style.setProperty("--gt-lminw", (px.reduce((s, n) => s + n, 0) + 4 * 10 + 2 * 8) + "px");
 }
 
-// The lower-right size slider scales List-view text too (shared cardScale):
-// base 12px × scale, clamped 8–30px, exposed as the --gt-lfont CSS var.
+// List-view text scales with its own listScale (independent of grid zoom):
+// base 12px × listScale, clamped 8–30px, exposed as the --gt-lfont CSS var.
 function applyListFont() {
   if (!gridEl) return;
-  const px = Math.max(8, Math.min(30, Math.round(12 * (state.cardScale || 1))));
+  const px = Math.max(8, Math.min(30, Math.round(12 * (state.listScale || 1))));
   gridEl.style.setProperty("--gt-lfont", px + "px");
 }
 
@@ -1890,14 +1934,16 @@ function buildPanel(host) {
   // which only repopulates toolbar/tree/grid, never wipes it.
   zoomLabel  = el("span", { class: "pct" });
   zoomSlider = el("input", { attrs: { type: "range", min: "1", max: "2.5", step: "0.05" } });
-  zoomSlider.value = state.cardScale;
+  zoomSlider.value = String(activeScale());
   zoomSlider.addEventListener("input", () => {
-    state.cardScale = parseFloat(zoomSlider.value);
-    applyCardScale(); applyListFont(); saveLS();
+    setActiveScale(parseFloat(zoomSlider.value));
+    if (state.listView) applyListFont(); else applyCardScale();
+    syncZoom(); saveLS();
   });
   zoomSlider.addEventListener("dblclick", () => {
-    state.cardScale = 1.5; zoomSlider.value = 1.5;
-    applyCardScale(); applyListFont(); saveLS();
+    setActiveScale(state.listView ? SCALE_DEFAULTS.list : SCALE_DEFAULTS.grid);
+    if (state.listView) applyListFont(); else applyCardScale();
+    syncZoom(); saveLS();
   });
   const zoom = el("div", { class: "gt-zoom" }, el("span", {}, "Size"), zoomSlider, zoomLabel);
   panelEl.appendChild(zoom);
@@ -2018,36 +2064,49 @@ function renderToolbar() {
 function renderBreadcrumb() {
   if (!breadcrumbEl) return;
   clear(breadcrumbEl);
+  breadcrumbCountEl = null;
+  // The breadcrumb row is a flex line: path/tag-notice on the left, the
+  // displayed-count badge pushed to the right (filled in by renderGrid).
+  const appendCount = () => {
+    breadcrumbCountEl = el("span", { class: "gt-count" });
+    breadcrumbEl.appendChild(breadcrumbCountEl);
+  };
   // In tag-filter mode the folder selection is "muted" — there's no real
   // folder path to show, so the breadcrumb slot hosts the tag notice
   // instead: "✕ clear  Tag: <name>". Same click target (the ✕) clears
   // the filter.
   if (state.tagFilter) {
     breadcrumbEl.classList.add("gt-tag-notice");
+    const path = el("span", { class: "gt-bc-path" });
     const x = el("span", { class: "clear", text: "✕ clear", attrs: { title: "Clear tag filter" } });
     x.addEventListener("click", () => { state.tagFilter = null; renderAll(); });
-    breadcrumbEl.appendChild(x);
-    breadcrumbEl.appendChild(el("span", { class: "label", text: "Tag:" }));
-    breadcrumbEl.appendChild(el("span", { class: "name", text: state.tagFilter }));
+    path.appendChild(x);
+    path.appendChild(el("span", { class: "label", text: "Tag:" }));
+    path.appendChild(el("span", { class: "name", text: state.tagFilter }));
+    breadcrumbEl.appendChild(path);
+    appendCount();
     return;
   }
   breadcrumbEl.classList.remove("gt-tag-notice");
   const rootId = state.rootId;
   const r0 = currentRoot();
+  const path = el("span", { class: "gt-bc-path" });
   const root = el("span", { class: "crumb" });
   root.textContent = !r0 ? "workflows" : (r0.id === "default" ? "workflows" : (r0.label || r0.abspath));
   if (r0 && r0.id !== "default") root.title = r0.abspath;
   root.addEventListener("click", () => selectFolder(rootId, ""));
-  breadcrumbEl.appendChild(root);
+  path.appendChild(root);
   let acc = "";
   for (const p of (state.currentPath ? state.currentPath.split("/") : [])) {
-    breadcrumbEl.appendChild(doc.createTextNode(" / "));
+    path.appendChild(doc.createTextNode(" / "));
     acc = acc ? acc + "/" + p : p;
     const c = el("span", { class: "crumb" }); c.textContent = p;
     const target = acc;
     c.addEventListener("click", () => selectFolder(rootId, target));
-    breadcrumbEl.appendChild(c);
+    path.appendChild(c);
   }
+  breadcrumbEl.appendChild(path);
+  appendCount();
 }
 
 function renderTree() {
@@ -2435,6 +2494,7 @@ function renderGrid() {
   if (panelEl) panelEl.classList.toggle("gt-listmode", !!state.listView);
   gridEl.classList.toggle("gt-aslist", !!state.listView);
   if (!state.listView) applyCardScale();
+  syncZoom();   // keep the Size slider + % on the active view's scale
   const q = (state.searchQuery || "").trim();
   const searching = q.length > 0;
   const globalSearch = searching && state.searchGlobal;
@@ -2482,6 +2542,7 @@ function renderGrid() {
     files = files.filter((f) =>
       baseName(f.path).replace(/\.json$/i, "").toLowerCase().indexOf(ql) >= 0);
   }
+  updateDisplayedCount(files.length);   // count badge in the breadcrumb row
   // In tag-filter mode the notice is rendered in the breadcrumb slot
   // (see renderBreadcrumb), not above the grid.
   if (!files.length) {

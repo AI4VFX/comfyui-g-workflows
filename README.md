@@ -41,7 +41,7 @@ you like, and they all behave the same.
 | 🖼️ **Thumbnail gallery** | Sidecar images paired by name. Set from a file, capture from the canvas, or drag-drop an image onto a card. Auto-normalized to a clean 800×450. |
 | 🏷️ **Tags** | A dedicated tag pane in the left sidebar with live counts. Click a tag → see every workflow that has it across **all** roots. Add tags via a chip-input editor with autocomplete, drag workflows onto a tag to assign, drag tag rows to reorder, sort A-Z / Z-A / custom. Rename or delete globally. |
 | 🔎 **Search — focused or global** | The search box narrows the current view by default (respects folder, Subfolders, Favorites). Flip the in-box **Global** toggle to scan every root at once, ignoring folder selection. |
-| ↕️ **Sort & views** | Card view with humanized dates ("2d ago", "Two months ago") + stackable **Name/Date** sort buttons; or a resizable **List** view with sortable Name / Date / Description / Tags / Path / Size columns. |
+| ↕️ **Sort & views** | Card view with humanized dates ("2d ago", "Two months ago") + stackable **Name/Date** sort buttons; or a resizable **List** view with sortable Name / Date / Description / Tags / Path / Size columns. The lower-right **Size** slider zooms each view *independently* — Thumbnail card size and List text size are remembered apart. A live **count** of the workflows currently shown sits at the right end of the breadcrumb. |
 | 💾 **Smart Save** | Overwrites the file you loaded — and even lights up for workflows you opened the *normal* ComfyUI way, when you pick the matching thumbnail. |
 | 🛟 **Auto-backup & safety** | Optional rolling snapshots of the workflow you're editing into a pinned `_Backup` location — a per-workflow ring buffer you size yourself (every 1–60 min, keep 1–50). Plus a one-time heads-up if ComfyUI's AutoSave is set to silently overwrite the file you have open. |
 | ⭐ **Favorites & notes** | Star workflows and add per-workflow descriptions, all stored as tiny sidecar files. |
@@ -74,7 +74,10 @@ Switch to **List** for a dense, sortable details view: Name, Date,
 Description, **Tags**, Path, Size. Every column header is sortable (3-state:
 none → ▲ → ▼) and every column is resizable. Single-click on the
 Description or Tags cell opens that workflow's editor immediately — no
-double-click needed. Empty cells stay clickable.
+double-click needed. Empty cells stay clickable. The lower-right **Size**
+slider scales the List text on its own scale (separate from the Thumbnail
+card size), and the breadcrumb shows how many workflows are currently
+listed.
 
 <img src="docs/03.GW_List-View.png" alt="List view" width="100%">
 
@@ -86,10 +89,14 @@ Save activates the moment you select the thumbnail whose name matches — and
 deactivates the instant you switch to a differently-named open workflow.
 **Save As…** opens a picker that pre-fills the filename from whatever
 workflow is actually open, and shows the existing files in the chosen
-folder so you can pick one to overwrite by name. **Load** opens the
-single selected workflow. Closing a tab whose file you just overwrote via
-Save no longer pesters you with "Save changes?" — the panel correctly
-clears ComfyUI's native dirty flag after writing.
+folder so you can pick one to overwrite by name. Saving under a **new
+name retitles the open tab** to that name — in place, with no reload, so
+your undo history and viewport are preserved — and points future plain
+**Save**s at the new file, exactly like a native Save As. The original
+file is left untouched on disk. **Load** opens the single selected
+workflow. Closing a tab whose file you just overwrote via Save no longer
+pesters you with "Save changes?" — the panel correctly clears ComfyUI's
+native dirty flag after writing.
 
 ### Auto-backup & AutoSave safety
 
@@ -224,7 +231,7 @@ ComfyUI/custom_nodes/comfyui-g-workflows/
 ├── LICENSE
 ├── README.md
 ├── docs/                   # README images + demo video
-└── sample-thumbnails/      # 43 ready-to-use starter thumbnails
+└── sample-thumbnails/      # 73 ready-to-use starter thumbnails
 ```
 
 No extra dependencies — it uses only the Python standard library plus
@@ -234,9 +241,9 @@ No extra dependencies — it uses only the Python standard library plus
 
 ## 🎁 Starter thumbnails
 
-`sample-thumbnails/` contains **43 hand-made 800×450 thumbnails** named after
-common workflow types (e.g. `Batch_Upscale.jpg`, `LTX-T2V.jpg`,
-`QwenPromptEnhancer.jpg`). Use them to give a fresh library an instant
+`sample-thumbnails/` contains **73 hand-made 800×450 thumbnails** named after
+common workflow types (e.g. `Background_Removal.jpg`, `LTX-T2V.jpg`,
+`ZImageTurbo.jpg`). Use them to give a fresh library an instant
 look:
 
 - **Pairing:** drop one next to a workflow with the same base name
