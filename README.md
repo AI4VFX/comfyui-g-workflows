@@ -90,10 +90,12 @@ deactivates the instant you switch to a differently-named open workflow.
 **Save As…** opens a picker that pre-fills the filename from whatever
 workflow is actually open, and shows the existing files in the chosen
 folder so you can pick one to overwrite by name. Saving under a **new
-name retitles the open tab** to that name — in place, with no reload, so
-your undo history and viewport are preserved — and points future plain
-**Save**s at the new file, exactly like a native Save As. The original
-file is left untouched on disk. **Load** opens the single selected
+name makes the open tab adopt that name**: a brand-new (never-saved)
+workflow is renamed in place — same tab, no reload, undo/viewport
+preserved — while an already-saved workflow opens under the new name as
+the active tab with its original file left untouched on disk (matching
+ComfyUI's own Save As). Either way, future plain **Save**s then target
+the new file. **Load** opens the single selected
 workflow. Closing a tab whose file you just overwrote via Save no longer
 pesters you with "Save changes?" — the panel correctly clears ComfyUI's
 native dirty flag after writing.

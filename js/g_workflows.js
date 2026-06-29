@@ -310,35 +310,50 @@ async function doSaveTo(relPath, overwrite, rootId, rebindActive) {
         const ws = app && app.extensionManager && app.extensionManager.workflow;
         const aw = ws && (ws.activeWorkflow
           || (typeof ws.getActiveWorkflow === "function" && ws.getActiveWorkflow()));
-        if (aw) {
+        const ourPath = "workflows/" + String(r.path).replace(/\\/g, "/");
+        const json = JSON.stringify(workflow);
+        // Sync a workflow object's content/originalContent + reset its change
+        // tracker so close-tab / switch-tab won't prompt "Save changes?".
+        const markClean = (wf) => {
+          if (!wf) return;
+          try { wf.content = json; } catch (_) {}
+          try { wf.originalContent = json; } catch (_) {}
+          try { wf.changeTracker && typeof wf.changeTracker.reset === "function" && wf.changeTracker.reset(); } catch (_) {}
+          try { wf.isModified = false; } catch (_) {}
+        };
+        if (ws && aw) {
           const awPath = String(aw.path || "").replace(/\\/g, "/");
-          const ourPath = "workflows/" + String(r.path).replace(/\\/g, "/");
-          const json = JSON.stringify(workflow);
-          // Sync the active workflow's content/originalContent and reset its
-          // change tracker so close-tab / switch-tab won't prompt "Save changes?".
-          const markClean = () => {
-            try { aw.content = json; } catch (_) {}
-            try { aw.originalContent = json; } catch (_) {}
-            try { aw.changeTracker && typeof aw.changeTracker.reset === "function" && aw.changeTracker.reset(); } catch (_) {}
-            try { aw.isModified = false; } catch (_) {}
-          };
           if (awPath && awPath === ourPath) {
-            markClean();   // plain Save / overwrite of the file already open
-          } else if (rebindActive && typeof aw.updatePath === "function") {
-            // Save As to a NEW name: re-point the open tab's identity to the new
-            // file IN PLACE — no graph reload (undo/viewport preserved) and no
-            // disk move (the old file stays). Mirrors native Save As: the tab
-            // retitles and future plain Saves target the new path. updatePath
-            // recomputes path/filename/key off the new path.
-            try { aw.updatePath(ourPath); } catch (_) {}
-            // A never-saved (temporary) graph reports size === -1, which keeps
-            // isPersisted false; nudge it so the tab no longer reads as unsaved.
-            try { if (aw.size === -1) aw.size = json.length; } catch (_) {}
-            markClean();
+            markClean(aw);   // plain Save / overwrite of the file already open
+          } else if (rebindActive) {
+            // Save As to a NEW name → make the open ComfyUI tab adopt that name
+            // while keeping the store's tab index consistent (tab stays
+            // closeable; clicking it won't spawn a duplicate). The store indexes
+            // tabs by path in a private map, so we must go through its own
+            // methods — mirroring native ComfyUI Save As, which branches on
+            // temporary vs saved.
+            if (aw.isTemporary && typeof ws.renameWorkflow === "function") {
+              // Brand-new (never-saved) graph: rename the SAME tab in place via
+              // the store (which re-keys its index) — NO reload (undo/viewport
+              // preserved) and NO disk move (a temporary rename is just an
+              // in-memory updatePath). Our /save already wrote the file.
+              await ws.renameWorkflow(aw, ourPath);
+              markClean(aw);
+              try { if (aw.size === -1) aw.size = json.length; } catch (_) {}  // flip temporary → persisted
+            } else if (typeof ws.getWorkflowByPath === "function" && typeof ws.openWorkflow === "function") {
+              // Already-saved file: an in-place re-key isn't reachable without
+              // moving the original on disk (the store's index is private), so
+              // open the just-saved file as the active tab the canonical way —
+              // exactly how ComfyUI's own Save As handles a saved workflow. The
+              // original file (and its tab) are left untouched.
+              if (typeof ws.syncWorkflows === "function") await ws.syncWorkflows();
+              const newWf = ws.getWorkflowByPath(ourPath);
+              if (newWf) { await ws.openWorkflow(newWf); markClean(newWf); }
+            }
           }
         }
       } catch (e) {
-        console.warn("[G-Workflows] could not rebind / clear ComfyUI dirty flag after save", e);
+        console.warn("[G-Workflows] could not rebind ComfyUI tab after save", e);
       }
     }
     await refreshTree();
