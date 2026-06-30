@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>💾 G-Workflows</title>
+<!--
+  Standalone host page for the G-Workflows panel.
+
+  The panel used to live in a window.open("") about:blank popup, but ad/content
+  blockers (e.g. AdBlock) treat a blank window.open popup as an ad pop-under and
+  blank it — and a per-site allowlist can't cover about:blank (it has no
+  domain). Serving this real same-origin page from the extension's web dir means
+  the popup URL is http://<comfyui-host>/extensions/comfyui-g-workflows/blank.html,
+  which the site allowlist matches and which no longer trips the pop-under
+  heuristic. g_workflows.js mounts the panel into #gt-host on load.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #1f2227; overflow: hidden; }
+  body { color: #dbe2ea; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #gt-host { position: absolute; inset: 0; display: flex; flex-direction: column; }
+</style>
+</head>
+<body>
+  <div id="gt-host"></div>
+</body>
+</html>

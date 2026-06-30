@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-g-workflows"
 description = "A workflow browser & organizer for ComfyUI that operates on the real user/default/workflows folder plus any number of extra disk locations. Thumbnail gallery (auto-normalized 800x450, set/capture/drag-drop) and details List view with sortable columns including Tags. Tags: dedicated sidebar pane with live counts, chip-input editor with autocomplete, drag-and-drop assign, drag-and-drop reorder, custom/A-Z/Z-A sort, global rename/delete, per-workflow Copy/Paste/Clear. Search with focused (current view) default and a Global toggle to scan every root. Stackable Name/Date sort on cards. Favorites and per-workflow descriptions, full file/folder CRUD with multi-select (Ctrl/Shift range) and mandatory delete confirmation, and a Save button that recognizes the workflow you already have open. UI extension only — adds no graph nodes."
-version = "1.4.2"
+version = "1.4.3"
 license = {file = "LICENSE"}
 readme = "README.md"
 requires-python = ">=3.9"

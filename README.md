@@ -233,7 +233,7 @@ ComfyUI/custom_nodes/comfyui-g-workflows/
 ├── LICENSE
 ├── README.md
 ├── docs/                   # README images + demo video
-└── sample-thumbnails/      # 73 ready-to-use starter thumbnails
+└── sample-thumbnails/      # 75 ready-to-use starter thumbnails
 ```
 
 No extra dependencies — it uses only the Python standard library plus
@@ -243,7 +243,7 @@ No extra dependencies — it uses only the Python standard library plus
 
 ## 🎁 Starter thumbnails
 
-`sample-thumbnails/` contains **73 hand-made 800×450 thumbnails** named after
+`sample-thumbnails/` contains **75 hand-made 800×450 thumbnails** named after
 common workflow types (e.g. `Background_Removal.jpg`, `LTX-T2V.jpg`,
 `ZImageTurbo.jpg`). Use them to give a fresh library an instant
 look:

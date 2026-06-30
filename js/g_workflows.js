@@ -3037,10 +3037,19 @@ window.addEventListener("beforeunload", () => {
 function openStandaloneWindow() {
   if (gtWin && !gtWin.closed) { gtWin.focus(); return; }
   const r = loadWinRect();
+  // Open a REAL same-origin page served from this extension's web dir, NOT a
+  // blank window.open("") about:blank popup. Ad/content blockers (e.g. AdBlock)
+  // treat a blank window.open popup as an ad pop-under and blank it, and a
+  // per-site allowlist cannot cover about:blank (it has no domain). The served
+  // URL is http://<comfyui-host>/extensions/comfyui-g-workflows/blank.html, so
+  // the site allowlist matches it and the pop-under heuristic no longer fires.
+  // import.meta.url → .../comfyui-g-workflows/g_workflows.js, so the sibling
+  // blank.html resolves to the right origin/port for either install.
+  const blankURL = new URL("./blank.html", import.meta.url).href;
   // Open WITHOUT geometry features (Firefox clamps/inflates them for popups —
   // see saveWinRect note). Size/position is applied explicitly below via
   // resizeTo/moveTo, which are screen-pixel and symmetric with what we persist.
-  gtWin = window.open("", "GregTemplatesWin", "popup=yes");
+  gtWin = window.open(blankURL, "GregTemplatesWin", "popup=yes");
   if (!gtWin) {
     // doc is still APP_DOC here, so this toast shows in the main window.
     toast("Allow pop-ups for this site to open G-Workflows in its own window");
@@ -3057,45 +3066,57 @@ function openStandaloneWindow() {
   applyRect();
   setTimeout(applyRect, 60);   // re-assert once the popup has settled
 
-  // Build the popup document via DOM APIs (window.open("") yields a blank
-  // same-origin document with <head>/<body> already present).
-  const wdoc = gtWin.document;
-  wdoc.title = "💾 G-Workflows";
-  const reset = wdoc.createElement("style");
-  reset.textContent = "html,body{margin:0;height:100%;background:#1f2227;overflow:hidden}" +
-    "body{color:#dbe2ea;font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}";
-  wdoc.head.appendChild(reset);
+  // The panel page now loads asynchronously, so mount once its DOM is ready.
+  // blank.html ships the reset <style>, <title>, and an empty #gt-host shell;
+  // we attach to that document and mount the panel into the host. Guarded so it
+  // runs exactly once whether triggered by the load event or the cached-load
+  // immediate retry below.
+  let mounted = false;
+  const mountWhenReady = () => {
+    if (mounted || !gtWin) return;
+    let wdoc, host;
+    try {
+      wdoc = gtWin.document;
+      host = wdoc && wdoc.getElementById("gt-host");
+    } catch (_) { return; }   // not yet navigated to our same-origin page
+    if (!host) return;        // blank.html not parsed yet — wait for load
+    mounted = true;
 
-  doc = wdoc;
-  injectCSS();
-  bindMenuDocListeners(doc);
-  const host = el("div", { style: { position: "absolute", inset: "0", display: "flex", flexDirection: "column" } });
-  wdoc.body.appendChild(host);
+    doc = wdoc;
+    injectCSS();
+    bindMenuDocListeners(doc);
 
-  // Capture geometry from the LIVE window — periodically + on resize — so the
-  // last size/position is reliably stored. pagehide alone is unreliable: it
-  // fires on a window mid-teardown and Firefox returns stale/zero screenX/Y
-  // there, which is why position was never remembered.
-  clearInterval(winSaveTimer);
-  winSaveTimer = setInterval(saveWinRect, 1000);
-  gtWin.addEventListener("resize", saveWinRect);
-  lastWfName = detectedWorkflowName();
-  clearInterval(wfWatchTimer);
-  wfWatchTimer = setInterval(watchActiveWorkflow, 400);
-
-  gtWin.addEventListener("pagehide", () => {
-    saveWinRect();                 // best-effort final sample (guarded)
+    // Capture geometry from the LIVE window — periodically + on resize — so the
+    // last size/position is reliably stored. pagehide alone is unreliable: it
+    // fires on a window mid-teardown and Firefox returns stale/zero screenX/Y
+    // there, which is why position was never remembered.
     clearInterval(winSaveTimer);
-    winSaveTimer = null;
+    winSaveTimer = setInterval(saveWinRect, 1000);
+    gtWin.addEventListener("resize", saveWinRect);
+    lastWfName = detectedWorkflowName();
     clearInterval(wfWatchTimer);
-    wfWatchTimer = null;
-    lastWfName = null;
-    gtWin = null;
-    doc = APP_DOC;          // main-window toasts work again
-    state.panelMounted = false;
-  });
+    wfWatchTimer = setInterval(watchActiveWorkflow, 400);
 
-  mountInto(host);
+    gtWin.addEventListener("pagehide", () => {
+      saveWinRect();                 // best-effort final sample (guarded)
+      clearInterval(winSaveTimer);
+      winSaveTimer = null;
+      clearInterval(wfWatchTimer);
+      wfWatchTimer = null;
+      lastWfName = null;
+      gtWin = null;
+      doc = APP_DOC;          // main-window toasts work again
+      state.panelMounted = false;
+    });
+
+    mountInto(host);
+  };
+
+  gtWin.addEventListener("load", mountWhenReady);
+  // If blank.html is cached the load event may have already fired before the
+  // listener attached — try immediately and on a short retry to cover that.
+  mountWhenReady();
+  setTimeout(mountWhenReady, 50);
 }
 
 async function mountInto(host) {
