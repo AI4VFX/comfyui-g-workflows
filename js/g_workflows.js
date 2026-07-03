@@ -1333,7 +1333,9 @@ async function overwriteWorkflow(filePath) {
     no.addEventListener("click",     () => close("no"));
     cancel.addEventListener("click", () => close("cancel"));
   });
-  if (choice === "yes")      await doSaveTo(filePath, true, state.rootId);
+  // rebindActive=true: like Save As, the open tab adopts the overwritten
+  // file's name, is marked clean, and future Saves target that file.
+  if (choice === "yes")      await doSaveTo(filePath, true, state.rootId, true);
   else if (choice === "no")  await clickSaveAs();        // open the Save As… picker
   // "cancel" / Esc / backdrop → do nothing
 }
