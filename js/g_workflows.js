@@ -1307,6 +1307,7 @@ body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:cross
 .gt-tag-notice .clear:hover { opacity:1; color:#dbe2ea; }
 .gt-tag-notice .label { color:#9aa6b2; }
 .gt-tag-notice .name  { font-weight:600; color:#3b82f6; }
+.gt-breadcrumb .gt-tag-chip { flex:none; margin-left:12px; padding:1px 8px; border:1px solid #3a414e; border-radius:10px; background:#1d2128; }
 .gt-grid.gt-aslist { display:block; }
 .gt-lhead, .gt-row { display:grid; grid-template-columns:var(--gt-lcols, 220px 170px 300px 200px 260px 90px); gap:10px; align-items:center; padding:6px 8px; }
 .gt-grid.gt-aslist .gt-lhead, .gt-grid.gt-aslist .gt-row { min-width:var(--gt-lminw, 1240px); box-sizing:border-box; }
@@ -2076,6 +2077,7 @@ function buildPanel(host) {
   gridWrap.appendChild(breadcrumbEl);
   gridWrap.appendChild(gridEl);
   installLasso(gridWrap);
+  installKeyNav();
 
   // Sidebar: tree + drag splitter + tag pane
   const side      = el("div", { class: "gt-side" });
@@ -2312,14 +2314,19 @@ function renderBreadcrumb() {
   // folder path to show, so the breadcrumb slot hosts the tag notice
   // instead: "✕ clear  Tag: <name>". Same click target (the ✕) clears
   // the filter.
-  if (state.tagFilter) {
-    breadcrumbEl.classList.add("gt-tag-notice");
-    const path = el("span", { class: "gt-bc-path" });
+  const tagNotice = () => {
+    const n = el("span", { class: "gt-tag-notice gt-tag-chip" });
     const x = el("span", { class: "clear", text: "✕ clear", attrs: { title: "Clear tag filter" } });
     x.addEventListener("click", () => { state.tagFilter = null; renderAll(); });
-    path.appendChild(x);
-    path.appendChild(el("span", { class: "label", text: "Tag:" }));
-    path.appendChild(el("span", { class: "name", text: state.tagFilter }));
+    n.appendChild(x);
+    n.appendChild(el("span", { class: "label", text: tagFilterGlobal() ? "Tag (all locations):" : "Tag:" }));
+    n.appendChild(el("span", { class: "name", text: state.tagFilter }));
+    return n;
+  };
+  if (tagFilterGlobal()) {
+    breadcrumbEl.classList.add("gt-tag-notice");
+    const path = el("span", { class: "gt-bc-path" });
+    path.appendChild(tagNotice());
     breadcrumbEl.appendChild(path);
     appendCount();
     return;
@@ -2343,6 +2350,7 @@ function renderBreadcrumb() {
     path.appendChild(c);
   }
   breadcrumbEl.appendChild(path);
+  if (state.tagFilter) breadcrumbEl.appendChild(tagNotice());   // folder-scoped filter rides next to the path
   appendCount();
 }
 
@@ -2574,7 +2582,6 @@ function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
 }
 
 function selectFolder(rootId, path) {
-  if (state.tagFilter) { state.tagFilter = null; /* fall through to normal folder switch */ }
   state.rootId = rootId;
   state.currentPath = path;
   state.selection.clear();
@@ -2696,15 +2703,18 @@ function cycleCardSort(key) {
 // Subfolders. The order file lives in the VIEWED folder and lists paths
 // relative to it, so the flat Subfolders view has its own order too.
 // Cross-root / filtered views (tag filter, search, List) have no folder.
+// Tag filter scope follows the search box's Global toggle: off = narrow the
+// current folder (± Subfolders); on = every folder in every location.
+function tagFilterGlobal() { return !!(state.tagFilter && state.searchGlobal); }
 function manualOrderApplies() {
   const q = (state.searchQuery || "").trim();
-  return !state.listView && !state.tagFilter && !q;
+  return !state.listView && !tagFilterGlobal() && !q;
 }
 // Why a drag can't reorder right now — shown on drop so an inert drag is
 // never silent.
 function manualOrderBlockedReason() {
   if (state.listView) return "Reorder works in Thumbnail view — switch off List.";
-  if (state.tagFilter) return "Reorder needs a folder view — clear the tag filter first.";
+  if (tagFilterGlobal()) return "Reorder needs a folder view — switch Global off or clear the tag filter.";
   if ((state.searchQuery || "").trim()) return "Reorder needs a folder view — clear the search first.";
   return null;
 }
@@ -2789,6 +2799,7 @@ let colResizing = false;
 // search), so Shift+click range-select follows what the user sees. Set by
 // renderGrid for BOTH the card and list branches.
 let visibleOrder = [];
+let visibleFiles = new Map();   // path -> file entry as rendered (carries __root in cross-root views)
 // Bumped on every click/dblclick. A deferred plain-click select captures the
 // value and bails if a later click (e.g. a quick Shift+click on another item)
 // superseded it — otherwise the stale single-select would stomp the range.
@@ -2832,6 +2843,7 @@ function renderGrid() {
   clear(gridEl);
   renderDetail();
   visibleOrder = [];   // reset; the render branch below repopulates it
+  visibleFiles = new Map();
   if (panelEl) panelEl.classList.toggle("gt-listmode", !!state.listView);
   if (panelEl) panelEl.classList.toggle("gt-focus", !!state.focusMode);
   gridEl.classList.toggle("gt-aslist", !!state.listView);
@@ -2843,7 +2855,7 @@ function renderGrid() {
   const r0 = currentRoot();
   // Skip the offline-root empty-state during tag-filter mode (cross-root) AND
   // during global search (also cross-root) — other roots may still have hits.
-  if (!state.tagFilter && !globalSearch && r0 && r0.available === false) {
+  if (!tagFilterGlobal() && !globalSearch && r0 && r0.available === false) {
     gridEl.appendChild(el("div", { class: "gt-empty",
       text: "This location is offline or was removed. Reconnect the drive/folder and click Refresh." }));
     return;
@@ -2854,7 +2866,7 @@ function renderGrid() {
   //  - Otherwise: current root + current folder ± Subfolders toggle.
   // Then layer Favorites filter, then Search.
   let files;
-  if (state.tagFilter) {
+  if (tagFilterGlobal()) {
     files = [];
     for (const r of state.roots) {
       if (!r || !r.tree) continue;
@@ -2878,6 +2890,7 @@ function renderGrid() {
     const node = findFolderNode(state.rootId, state.currentPath);
     files = node ? (state.recurseSubfolders ? collectFilesRecursive(node) : (node.files || [])) : [];
   }
+  if (state.tagFilter && !tagFilterGlobal()) files = files.filter((f) => (f.tags || []).indexOf(state.tagFilter) >= 0);
   if (state.favoritesOnly) files = files.filter((f) => f.favorite);
   if (searching) {
     const ql = q.toLowerCase();
@@ -2890,7 +2903,7 @@ function renderGrid() {
   if (!files.length) {
     const empty = el("div", { class: "gt-empty" });
     empty.textContent = state.tagFilter
-      ? `No workflows tagged "${state.tagFilter}".`
+      ? (tagFilterGlobal() ? `No workflows tagged "${state.tagFilter}".` : `No workflows tagged "${state.tagFilter}" in this folder — turn on Global to search every location.`)
       : searching
       ? `No workflows match "${q}".`
       : state.favoritesOnly
@@ -2926,7 +2939,7 @@ function renderGrid() {
     const list = el("div", { class: "gt-list" });
     const ordered = sortedListFiles(files);
     visibleOrder = ordered.map((x) => x.path);
-    for (const f of ordered) list.appendChild(renderRow(f));
+    for (const f of ordered) { visibleFiles.set(f.path, f); list.appendChild(renderRow(f)); }
     gridEl.appendChild(list);
   } else {
     const cs = Array.isArray(state.cardSort) ? state.cardSort : [];
@@ -2942,8 +2955,71 @@ function renderGrid() {
       cardFiles = cs.length ? sortFilesByMulti(files, cs) : files;
     }
     visibleOrder = cardFiles.map((x) => x.path);
-    for (const f of cardFiles) gridEl.appendChild(renderCard(f));
+    for (const f of cardFiles) { visibleFiles.set(f.path, f); gridEl.appendChild(renderCard(f)); }
   }
+}
+
+// Keyboard navigation over the visible files: arrows move the selection
+// (Left/Right by one card, Up/Down by one grid row — or one row in List),
+// Shift extends the range from the anchor, Home/End jump, Enter loads. Typing
+// in any field is left alone, except Up/Down in the (auto-focused) search box
+// which navigate so the panel is usable straight after opening.
+function installKeyNav() {
+  doc.addEventListener("keydown", (e) => {
+    if (!state.panelMounted || !gridEl) return;
+    if (doc.querySelector(".gt-modal-bg") || activeMenu) return;
+    const t = e.target;
+    const inField = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    const inSearch = inField && t.classList && t.classList.contains("gt-search-in");
+    const vertical = e.key === "ArrowUp" || e.key === "ArrowDown";
+    if (inField && !(inSearch && vertical)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Enter"];
+    if (keys.indexOf(e.key) < 0) return;
+    const order = visibleOrder;
+    if (!order.length) return;
+    e.preventDefault();
+    if (e.key === "Enter") {
+      const sel = Array.from(state.selection);
+      if (sel.length === 1) loadWorkflow(sel[0], (visibleFiles.get(sel[0]) || {}).__root).then(() => { renderGrid(); renderToolbar(); });
+      return;
+    }
+    // Current position = the anchor if it's visible, else the first selected.
+    let cur = order.indexOf(state.selAnchor);
+    if (cur < 0) cur = order.findIndex((p) => state.selection.has(p));
+    if (e.shiftKey && state.selAnchor && order.indexOf(state.selAnchor) >= 0) {
+      // Range: move the far end, keep the anchor. The far end is whichever
+      // selected path is furthest from the anchor in the direction we last went.
+      const selIdx = order.map((p, i) => state.selection.has(p) ? i : -1).filter((i) => i >= 0);
+      const ai = order.indexOf(state.selAnchor);
+      const far = selIdx.length ? (Math.abs(selIdx[0] - ai) >= Math.abs(selIdx[selIdx.length - 1] - ai) ? selIdx[0] : selIdx[selIdx.length - 1]) : ai;
+      cur = far;
+    }
+    const cols = state.listView ? 1 : Math.max(1, (getComputedStyle(gridEl).gridTemplateColumns || "").split(" ").filter(Boolean).length);
+    let next = cur;
+    if (cur < 0) next = 0;
+    else if (e.key === "ArrowLeft")  next = state.listView ? cur : cur - 1;
+    else if (e.key === "ArrowRight") next = state.listView ? cur : cur + 1;
+    else if (e.key === "ArrowUp")    next = cur - cols;
+    else if (e.key === "ArrowDown")  next = cur + cols;
+    else if (e.key === "Home")       next = 0;
+    else if (e.key === "End")        next = order.length - 1;
+    next = Math.max(0, Math.min(order.length - 1, next));
+    const path = order[next];
+    const f = visibleFiles.get(path);
+    if (e.shiftKey && cur >= 0) {
+      const r = pathRange(order, state.selAnchor, path);
+      state.selection = new Set(r);
+    } else {
+      state.selection = new Set([path]);
+      state.selAnchor = path;
+    }
+    clickSeq++;   // a pending single-click select must not undo this
+    if (f) { focusFileContext(f); state.focusPath = f.path; state.focusRoot = f.__root || state.rootId; }
+    renderGrid(); renderToolbar();
+    const elm = gridEl.querySelector(`[data-path="${CSS.escape(path)}"]`);
+    if (elm) elm.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
 }
 
 // Rubber-band selection: mousedown on empty grid space (not a card, not the
