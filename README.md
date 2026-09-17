@@ -75,7 +75,7 @@ positions are remembered.
 Turn on **Subfolders** to see a folder and everything beneath it as one flat
 gallery:
 
-https://github.com/user-attachments/assets/e00dd0ba-7baf-4e27-a320-99d2696b73fe
+https://github.com/user-attachments/assets/5e4170cd-957d-4539-99cd-0e77b07f4250
 
 ### The Details panel
 
@@ -94,7 +94,7 @@ chip editor.
 The analysis runs once per file on the server and is cached until the file
 changes, so clicking around is instant.
 
-https://github.com/user-attachments/assets/5cef35d0-8bfc-491e-b689-e7f140ea0ccc
+https://github.com/user-attachments/assets/1736900a-f3ab-4389-b407-94ea837858fd
 
 ### List view
 
@@ -167,9 +167,9 @@ space and **drag a lasso** (Ctrl adds to what you have). A selected group
 drags as one — the ghost shows a stack with a count badge — whether you're
 arranging it, tagging it or moving it to a folder.
 
-https://github.com/user-attachments/assets/8750887f-d5c8-4436-806c-f62c6fe08cac
+https://github.com/user-attachments/assets/30c67cd7-3708-4c90-a1e2-e7a31bf7ec20
 
-https://github.com/user-attachments/assets/37f2c1e3-d726-4cd8-92bb-0eefbf391946
+https://github.com/user-attachments/assets/d615df34-226e-4327-a9cf-d2596bb4885e
 
 **Keyboard.** **← →** step through cards, **↑ ↓** move a row (a real grid
 row — the panel reads the column count live), **Shift + arrows** extend the
@@ -184,7 +184,7 @@ breadcrumb or Details panel. The toolbar and the folder tree stay so you can
 keep navigating; hover a card for its name. Everything else (selection,
 lasso, arranging, drag to folders) keeps working.
 
-https://github.com/user-attachments/assets/9f8a4541-f32c-4e12-a697-e35509026878
+https://github.com/user-attachments/assets/529693fd-1779-4496-991f-645e61496218
 
 ### Favorites — in the panel and from the top bar
 
@@ -250,7 +250,7 @@ opens the editor; **Copy tags** / **Paste tags** moves a workflow's tag list
 onto other selected workflows; **Clear tags** strips every tag from the
 selection (with confirmation).
 
-https://github.com/user-attachments/assets/8a9ad504-462c-4efc-a16b-9b4d07b2560b
+https://github.com/user-attachments/assets/6683ebdd-981d-4388-98fb-322f41fec5b5
 
 ### AutoTag
 
@@ -277,7 +277,7 @@ picked up the next time the panel refreshes (it re-reads only files whose
 size or date moved). Tag pane counts and filters include auto tags, so
 "show me everything that runs on `wan 2.2`" is one click.
 
-https://github.com/user-attachments/assets/2a776360-998e-4873-9b30-2101c8431d51
+https://github.com/user-attachments/assets/e16992f1-4122-4895-9740-a1d466d64535
 
 ### Search — focused or global
 
