@@ -78,6 +78,7 @@ const state = {
   focusPath: null,            // file shown in the Details panel = last clicked (transient)
   focusRoot: null,            // root id of focusPath
   manualSort: false,          // cards follow the folder's drag-and-drop order (.gworder.json)
+  focusMode: false,           // Focus: thumbnails only — breadcrumb, card text and Details hidden
 };
 
 function loadLS() {
@@ -149,6 +150,7 @@ function loadLS() {
     if (typeof parsed.autoBackupEnabled === "boolean") state.autoBackupEnabled = parsed.autoBackupEnabled;
     if (typeof parsed.detailOpen === "boolean") state.detailOpen = parsed.detailOpen;
     if (typeof parsed.manualSort === "boolean") state.manualSort = parsed.manualSort;
+    if (typeof parsed.focusMode === "boolean") state.focusMode = parsed.focusMode;
     if (typeof parsed.detailW === "number" && parsed.detailW >= DETAIL_MIN_W && parsed.detailW <= DETAIL_MAX_W) {
       state.detailW = Math.round(parsed.detailW);
     }
@@ -188,6 +190,7 @@ function saveLS() {
       detailOpen: state.detailOpen,
       detailW: state.detailW,
       manualSort: state.manualSort,
+      focusMode: state.focusMode,
     }));
   } catch (_) {}
 }
@@ -1291,6 +1294,8 @@ const CSS = `
 .gt-card .tags .pill.empty:hover { color:#dbe2ea; border-color:#3b82f6; background:#1f2733; }
 .gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
+.gt-root.gt-focus .gt-breadcrumb, .gt-root.gt-focus .gt-card .meta, .gt-root.gt-focus .gt-detail, .gt-root.gt-focus .gt-vsplit { display:none; }
+.gt-root.gt-focus .gt-grid-wrap { padding-top:8px; }
 .gt-lasso { position:absolute; border:1px solid #3b82f6; background:rgba(59,130,246,.15); pointer-events:none; z-index:5; }
 body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:crosshair; }
 .gt-card.ins-before { box-shadow:-4px 0 0 0 #3b82f6, 0 0 0 2px rgba(59,130,246,.25); }
@@ -2266,6 +2271,13 @@ function renderToolbar() {
   }, { primary: state.listView });
   listBtn.title = "Show workflows as a details list (Name, Date, Description, Path, Size)";
   toolbarEl.appendChild(listBtn);
+  const focusBtn = mk("Focus", () => {
+    state.focusMode = !state.focusMode;
+    saveLS();
+    renderAll();
+  }, { primary: state.focusMode });
+  focusBtn.title = "Focus: thumbnails only — hides the breadcrumb, card text and the Details panel (toolbar and folders stay)";
+  toolbarEl.appendChild(focusBtn);
   toolbarEl.appendChild(mk(cbLabel, pasteHere, { disabled: cbCount === 0 }));
   toolbarEl.appendChild(mk(`Delete (${selCount})`, () => deleteFiles(Array.from(state.selection)), { disabled: selCount === 0 }));
   toolbarEl.appendChild(mk("Refresh", async () => { await refreshTree(); renderAll(); }));
@@ -2776,6 +2788,7 @@ function renderGrid() {
   renderDetail();
   visibleOrder = [];   // reset; the render branch below repopulates it
   if (panelEl) panelEl.classList.toggle("gt-listmode", !!state.listView);
+  if (panelEl) panelEl.classList.toggle("gt-focus", !!state.focusMode);
   gridEl.classList.toggle("gt-aslist", !!state.listView);
   if (!state.listView) applyCardScale();
   syncZoom();   // keep the Size slider + % on the active view's scale
@@ -3426,6 +3439,7 @@ function renderCard(f) {
     editTags(f.path);
   });
   card.appendChild(thumb); card.appendChild(meta);
+  card.title = name.textContent + ((f.description || "").trim() ? "\n" + (f.description || "").trim() : "");
   card.appendChild(makeFavStar(f));
   wireFileEl(card, f);
   return card;
