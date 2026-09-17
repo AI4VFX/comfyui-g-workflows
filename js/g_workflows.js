@@ -22,8 +22,12 @@ function ekey(rootId, p) { return (rootId || "default") + EKSEP + (p || ""); }
 const API_BASE = window.location.origin + API; // absolute backend base
 const APP_DOC  = document;                     // ComfyUI main-window document (canvas, topbar)
 let   doc      = document;                     // document the panel UI currently lives in
+let   detailEl = null, vsplitEl = null;        // right-hand Details panel + its drag splitter
+const analysisCache = new Map();               // "root|path|mtime" -> /analysis payload
 const CARD_BASE = 160;                         // default grid column min (px); slider & preview base
 const LIST_COL_DEFAULT = [220, 170, 300, 200, 260, 90]; // default list column px widths (Name,Date,Desc,Tags,Path,Size)
+const DETAIL_MIN_W = 200;                      // Details panel width clamp (px)
+const DETAIL_MAX_W = 900;
 const LIST_COL_MIN = 60;                       // min px width per list column when resizing
 const LIST_SORTABLE = { "col-name": "name", "col-date": "date", "col-tags": "tags", "col-size": "size" }; // header class -> sort key
 
@@ -67,6 +71,10 @@ const state = {
   autoBackupEnabled: false,        // master toggle for the rolling auto-backup
   autoBackupIntervalMinutes: 5,    // backup cadence in minutes (1–60)
   autoBackupCountPerFile: 10,      // ring-buffer size per workflow (1–50)
+  detailOpen: true,           // right-hand Details panel shown (collapsed = narrow strip)
+  detailW: 320,               // Details panel width px (drag the splitter; persisted)
+  focusPath: null,            // file shown in the Details panel = last clicked (transient)
+  focusRoot: null,            // root id of focusPath
 };
 
 function loadLS() {
@@ -136,6 +144,10 @@ function loadLS() {
         .filter((t) => { if (seen.has(t)) return false; seen.add(t); return true; });
     }
     if (typeof parsed.autoBackupEnabled === "boolean") state.autoBackupEnabled = parsed.autoBackupEnabled;
+    if (typeof parsed.detailOpen === "boolean") state.detailOpen = parsed.detailOpen;
+    if (typeof parsed.detailW === "number" && parsed.detailW >= DETAIL_MIN_W && parsed.detailW <= DETAIL_MAX_W) {
+      state.detailW = Math.round(parsed.detailW);
+    }
     if (typeof parsed.autoBackupIntervalMinutes === "number"
         && parsed.autoBackupIntervalMinutes >= 1 && parsed.autoBackupIntervalMinutes <= 60) {
       state.autoBackupIntervalMinutes = Math.round(parsed.autoBackupIntervalMinutes);
@@ -169,6 +181,8 @@ function saveLS() {
       autoBackupEnabled: state.autoBackupEnabled,
       autoBackupIntervalMinutes: state.autoBackupIntervalMinutes,
       autoBackupCountPerFile: state.autoBackupCountPerFile,
+      detailOpen: state.detailOpen,
+      detailW: state.detailW,
     }));
   } catch (_) {}
 }
@@ -826,9 +840,10 @@ async function pasteTagsOntoSelection() {
   toast(`Pasted ${clip.length} tag(s) onto ${okCount} workflow(s)`);
 }
 
-async function editTags(workflowPath) {
+async function editTags(workflowPath, rootId) {
+  rootId = rootId || state.rootId;
   let current = [];
-  const folder = findFolderNode(state.rootId, dirName(workflowPath));
+  const folder = findFolderNode(rootId, dirName(workflowPath));
   if (folder) {
     const fe = (folder.files || []).find((x) => x.path === workflowPath);
     if (fe && Array.isArray(fe.tags)) current = fe.tags.slice();
@@ -836,7 +851,7 @@ async function editTags(workflowPath) {
   const next = await tagsModal(`Tags — ${baseName(workflowPath)}`, current);
   if (next === null) return; // cancelled
   try {
-    await apiPost("/set_tags", { path: workflowPath, tags: next, root: state.rootId });
+    await apiPost("/set_tags", { path: workflowPath, tags: next, root: rootId });
     await refreshTree(); renderAll();
     toast("Tags saved");
   } catch (e) { toast("Save tags failed: " + e.message); }
@@ -1029,6 +1044,25 @@ function focusFileContext(f) {
   }
 }
 
+// The Details panel follows the last-clicked file (multi-select shows the
+// anchor). Cheap enough to re-render on every click.
+function setFocusFile(f) {
+  state.focusPath = f ? f.path : null;
+  state.focusRoot = f ? ((f.__root) || state.rootId) : null;
+  renderDetail();
+}
+function findFileEntry(rootId, path) {
+  const folder = findFolderNode(rootId, dirName(path));
+  return folder ? ((folder.files || []).find((x) => x.path === path) || null) : null;
+}
+async function fetchAnalysis(f, rootId) {
+  const key = rootId + "|" + f.path + "|" + (f.mtime || 0) + "|" + (f.size || 0);
+  if (analysisCache.has(key)) return analysisCache.get(key);
+  const a = await apiGet("/analysis?path=" + encodeURIComponent(f.path), rootId);
+  analysisCache.set(key, a);
+  return a;
+}
+
 
 function fileToDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -1071,6 +1105,7 @@ const CSS = `
 .gt-toolbar button.primary:hover { background:#2563eb; }
 .gt-toolbar button:disabled { opacity:.4; cursor:not-allowed; }
 .gt-toolbar .gt-spacer { flex:1; }
+.gt-toolbar button.gt-sq { width:30px; height:28px; padding:0; font-size:17px; line-height:1; display:inline-flex; align-items:center; justify-content:center; }
 .gt-search { flex:1; min-width:150px; display:inline-flex; align-items:center; gap:4px; background:#13161a; border:1px solid #3a414e; border-radius:4px; padding:2px 4px 2px 8px; }
 .gt-search:focus-within { border-color:#3b82f6; }
 .gt-search-in { background:transparent; color:#dbe2ea; border:none; outline:none; padding:3px 0; font-size:12px; width:0; min-width:60px; flex:1 1 auto; }
@@ -1104,7 +1139,40 @@ const CSS = `
 .gt-tagpane .gt-tprow .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .gt-tagpane .gt-tprow .count { opacity:.55; font-size:11px; }
 .gt-tagpane .gt-tpempty { padding:8px 6px; font-size:11px; opacity:.55; font-style:italic; }
-.gt-grid-wrap { flex:1; overflow:auto; padding:8px 8px 52px 8px; }
+.gt-grid-wrap { flex:1; min-width:0; overflow:auto; padding:8px 8px 52px 8px; }
+.gt-vsplit { flex:none; width:6px; background:#2a2f38; border-left:1px solid #303540; border-right:1px solid #303540; cursor:col-resize; position:relative; }
+.gt-vsplit::after { content:""; position:absolute; left:50%; top:50%; width:2px; height:30px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
+.gt-vsplit:hover::after { background:#3b82f6; }
+.gt-detail { flex:none; width:320px; min-width:0; overflow:auto; background:#1d2128; display:flex; flex-direction:column; }
+.gt-detail.collapsed { display:none; }
+.gt-dhead { display:flex; align-items:center; gap:6px; padding:6px 8px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid #303540; position:sticky; top:0; background:#1d2128; z-index:1; }
+.gt-dhead .lab { flex:1; opacity:.55; }
+.gt-dhead .btn { background:transparent; border:1px solid #3a414e; color:#dbe2ea; border-radius:3px; cursor:pointer; padding:0 6px 1px; font:bold 13px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+.gt-dhead .btn:hover { background:#2b313a; border-color:#3b82f6; }
+.gt-dbody { padding:8px 10px 16px; display:flex; flex-direction:column; gap:10px; font-size:12px; }
+.gt-dthumb { aspect-ratio:16/9; background:#181b21 center/cover no-repeat; border-radius:4px; border:1px solid #353c47; display:flex; align-items:center; justify-content:center; color:#555; font-size:11px; }
+.gt-dname { font-size:14px; font-weight:600; word-break:break-word; line-height:1.3; }
+.gt-dkv { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; }
+.gt-dkv .k { opacity:.55; white-space:nowrap; }
+.gt-dkv .v { word-break:break-word; }
+.gt-dsec { display:flex; flex-direction:column; gap:4px; }
+.gt-dsec .h { font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.55; display:flex; align-items:center; gap:6px; }
+.gt-dsec .h .lnk { margin-left:auto; cursor:pointer; color:#3b82f6; text-transform:none; letter-spacing:0; font-size:11px; }
+.gt-dsec .h .lnk:hover { text-decoration:underline; }
+.gt-dtags { display:flex; flex-wrap:wrap; gap:4px; }
+.gt-detail .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:11px; cursor:pointer; white-space:nowrap; user-select:none; }
+.gt-detail .pill:hover { background:#353c47; }
+.gt-detail .pill.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
+.gt-detail textarea { width:100%; box-sizing:border-box; min-height:90px; resize:vertical; background:#13161a; color:#ffe14d; border:1px solid #3a414e; border-radius:4px; padding:6px 8px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+.gt-detail textarea:focus { border-color:#3b82f6; outline:none; }
+.gt-detail .hint { font-size:10px; opacity:.45; }
+.gt-dlist { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:2px; }
+.gt-dlist li { word-break:break-all; font-size:11.5px; line-height:1.35; }
+.gt-dlist li.pack { color:#e8b04b; cursor:default; }
+.gt-dlist li.pack .cnt { opacity:.55; margin-left:4px; }
+.gt-dlist li.miss { color:#fca5a5; }
+.gt-dmuted { opacity:.5; font-style:italic; }
+.gt-dempty { padding:24px 10px; opacity:.5; text-align:center; font-style:italic; }
 .gt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
 .gt-breadcrumb { padding:4px 4px 8px 4px; opacity:.75; font-size:12px; display:flex; align-items:center; gap:8px; }
 .gt-breadcrumb .gt-bc-path { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1914,6 +1982,30 @@ function buildPanel(host) {
   body.appendChild(side);
   body.appendChild(gridWrap);
 
+  // Right-hand Details panel with its own drag splitter (CSS resize only
+  // grabs the bottom-right corner, which would grow the wrong way here).
+  vsplitEl = el("div", { class: "gt-vsplit", attrs: { title: "Drag to resize" } });
+  detailEl = el("div", { class: "gt-detail" });
+  body.appendChild(vsplitEl);
+  body.appendChild(detailEl);
+  detailEl.style.width = state.detailW + "px";
+  let vDragX = 0, vDragW = 0;
+  vsplitEl.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    vDragX = e.clientX; vDragW = state.detailW;
+    doc.addEventListener("mousemove", onVMove);
+    doc.addEventListener("mouseup",   onVUp);
+  });
+  function onVMove(e) {
+    state.detailW = Math.max(DETAIL_MIN_W, Math.min(DETAIL_MAX_W, vDragW + (vDragX - e.clientX)));
+    detailEl.style.width = state.detailW + "px";
+  }
+  function onVUp() {
+    doc.removeEventListener("mousemove", onVMove);
+    doc.removeEventListener("mouseup",   onVUp);
+    saveLS();
+  }
+
   function applySplit() {
     const p = Math.max(0.1, Math.min(0.9, state.splitPos || 0.6));
     treeEl.style.flex    = String(p);
@@ -2075,6 +2167,11 @@ function renderToolbar() {
   toolbarEl.appendChild(mk(cbLabel, pasteHere, { disabled: cbCount === 0 }));
   toolbarEl.appendChild(mk(`Delete (${selCount})`, () => deleteFiles(Array.from(state.selection)), { disabled: selCount === 0 }));
   toolbarEl.appendChild(mk("Refresh", async () => { await refreshTree(); renderAll(); }));
+  const detBtn = mk("◨", () => { state.detailOpen = !state.detailOpen; saveLS(); renderDetail(); renderToolbar(); },
+    { primary: state.detailOpen });
+  detBtn.classList.add("gt-sq");
+  detBtn.title = state.detailOpen ? "Hide the Details panel" : "Show the Details panel";
+  toolbarEl.appendChild(detBtn);
 }
 
 function renderBreadcrumb() {
@@ -2506,6 +2603,7 @@ function startColResize(e, i) {
 function renderGrid() {
   if (!gridEl) return;
   clear(gridEl);
+  renderDetail();
   visibleOrder = [];   // reset; the render branch below repopulates it
   if (panelEl) panelEl.classList.toggle("gt-listmode", !!state.listView);
   gridEl.classList.toggle("gt-aslist", !!state.listView);
@@ -2651,6 +2749,7 @@ function wireFileEl(elm, f) {
   let clickTimer = null;
   elm.addEventListener("click", (e) => {
     focusFileContext(f);   // cross-root search hit → point state at its location
+    setFocusFile(f);
     const seq = ++clickSeq;
     if (e.shiftKey) {                                   // RANGE select (anchor..here)
       if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
@@ -2688,6 +2787,7 @@ function wireFileEl(elm, f) {
   elm.addEventListener("dblclick", (e) => {
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;   // modified dblclick = no-op
     focusFileContext(f);
+    setFocusFile(f);
     clickSeq++;   // invalidate the paired first-click's deferred single-select
     if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     state.selection.clear();
@@ -2698,6 +2798,7 @@ function wireFileEl(elm, f) {
   elm.addEventListener("contextmenu", (e) => {
     e.preventDefault(); e.stopPropagation();
     focusFileContext(f);
+    setFocusFile(f);
     if (!state.selection.has(f.path)) { state.selection.clear(); state.selection.add(f.path); renderGrid(); renderToolbar(); }
     const sel = Array.from(state.selection);
     const isSingle = sel.length === 1;
@@ -2813,6 +2914,148 @@ function relDate(mtimeSec) {
   const y = Math.floor(days / 365);
   if (y === 1) return "A year ago";
   return `${y <= 11 ? REL_WORDS[y] : y} years ago`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Details panel (right side): the focused workflow's identity, tags, an
+// in-place description editor, and the server-side graph analysis (node
+// count, model files + families, third-party packs, missing node types).
+// ─────────────────────────────────────────────────────────────────────────────
+function renderDetail() {
+  if (!detailEl) return;
+  clear(detailEl);
+  detailEl.classList.toggle("collapsed", !state.detailOpen);
+  if (vsplitEl) vsplitEl.style.display = state.detailOpen ? "" : "none";
+  detailEl.style.width = state.detailOpen ? state.detailW + "px" : "";
+  if (!state.detailOpen) return;
+  const head = el("div", { class: "gt-dhead" });
+  head.appendChild(el("span", { class: "lab", text: "Details" }));
+  detailEl.appendChild(head);
+
+  const f = state.focusPath ? findFileEntry(state.focusRoot, state.focusPath) : null;
+  if (!f) {
+    detailEl.appendChild(el("div", { class: "gt-dempty", text: "Click a workflow to see its details." }));
+    return;
+  }
+  const rootId = state.focusRoot;
+  const body = el("div", { class: "gt-dbody" });
+  const sec = (title, linkText, onLink) => {
+    const wrap = el("div", { class: "gt-dsec" });
+    const h = el("div", { class: "h" }, el("span", { text: title }));
+    if (linkText) {
+      const lnk = el("span", { class: "lnk", text: linkText });
+      lnk.addEventListener("click", onLink);
+      h.appendChild(lnk);
+    }
+    wrap.appendChild(h);
+    body.appendChild(wrap);
+    return wrap;
+  };
+
+  const th = el("div", { class: "gt-dthumb" });
+  if (f.thumb) {
+    const bust = f.thumbMtime || f.mtime || Date.now();
+    th.style.backgroundImage = `url("${API_BASE}/thumb?path=${encodeURIComponent(f.thumb)}&root=${encodeURIComponent(rootId)}&t=${bust}")`;
+  } else th.textContent = "no thumbnail";
+  body.appendChild(th);
+  body.appendChild(el("div", { class: "gt-dname", text: baseName(f.path).replace(/\.json$/i, "") }));
+
+  const r = rootEntry(rootId);
+  const kv = el("div", { class: "gt-dkv" });
+  const add = (k, v) => {
+    const vEl = el("span", { class: "v", text: v });
+    kv.appendChild(el("span", { class: "k", text: k })); kv.appendChild(vEl);
+    return vEl;
+  };
+  const dir = dirName(f.path);
+  add("Location", (r ? rootDisplayLabel(r) : rootId) + (dir ? " / " + dir : ""));
+  add("Modified", f.mtime ? new Date(f.mtime * 1000).toLocaleString() : "—");
+  add("Size", fmtSize(f.size));
+  const nodesV = add("Nodes", "…");
+  const famV   = add("Family", "…");
+  body.appendChild(kv);
+
+  const tsec = sec("Tags", "Edit…", () => editTags(f.path, rootId));
+  const tagsEl = el("div", { class: "gt-dtags" });
+  const tagList = Array.isArray(f.tags) ? f.tags : [];
+  if (!tagList.length) tagsEl.appendChild(el("span", { class: "gt-dmuted", text: "no tags" }));
+  for (const t of tagList) {
+    const pill = el("span", { class: "pill" + (state.tagFilter === t ? " active" : ""), text: t });
+    pill.addEventListener("click", () => { state.tagFilter = (state.tagFilter === t) ? null : t; renderAll(); });
+    tagsEl.appendChild(pill);
+  }
+  tsec.appendChild(tagsEl);
+
+  const dsec = sec("Description");
+  const ta = el("textarea", { attrs: { placeholder: "Add a description…", spellcheck: "false" } });
+  ta.value = f.description || "";
+  const saveDesc = async () => {
+    const v = ta.value;
+    if (v.trim() === (f.description || "").trim()) return;
+    try {
+      await apiPost("/set_desc", { path: f.path, description: v, root: rootId });
+      await refreshTree(); renderAll();
+      toast("Description saved");
+    } catch (e) { toast("Save description failed: " + e.message); }
+  };
+  ta.addEventListener("blur", saveDesc);
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); ta.blur(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); ta.value = f.description || ""; ta.blur(); }
+    else e.stopPropagation();   // typing must never reach the panel's shortcuts
+  });
+  dsec.appendChild(ta);
+  dsec.appendChild(el("div", { class: "hint", text: "Saves when you click away · Ctrl+Enter to save · Esc to revert" }));
+
+  const msec = sec("Models");
+  const mlist = el("ul", { class: "gt-dlist" }, el("li", { class: "gt-dmuted", text: "analysing…" }));
+  msec.appendChild(mlist);
+  const psec = sec("Custom node packs");
+  const plist = el("ul", { class: "gt-dlist" }, el("li", { class: "gt-dmuted", text: "analysing…" }));
+  psec.appendChild(plist);
+  detailEl.appendChild(body);
+
+  fetchAnalysis(f, rootId).then((a) => {
+    if (state.focusPath !== f.path || state.focusRoot !== rootId) return;   // focus moved on
+    clear(mlist); clear(plist);
+    if (!a || !a.ok) {
+      nodesV.textContent = "—"; famV.textContent = "—";
+      mlist.appendChild(el("li", { class: "gt-dmuted", text: "could not read this workflow" }));
+      plist.appendChild(el("li", { class: "gt-dmuted", text: "—" }));
+      return;
+    }
+    nodesV.textContent = String(a.nodes || 0) + (a.subgraphs ? " (" + a.subgraphs + " subgraph" + (a.subgraphs > 1 ? "s" : "") + ")" : "");
+    famV.textContent = (a.families && a.families.length) ? a.families.join(", ") : "—";
+    if (!a.models || !a.models.length) mlist.appendChild(el("li", { class: "gt-dmuted", text: "no model files referenced" }));
+    for (const m of (a.models || [])) mlist.appendChild(el("li", { text: m }));
+    const packs = Object.keys(a.packs || {}).sort((x, y) => x.toLowerCase().localeCompare(y.toLowerCase()));
+    const lgTypes0 = (window.LiteGraph && window.LiteGraph.registered_node_types) || {};
+    const anyMissing = (a.missing || []).some((t) => !(t in lgTypes0));
+    if (!packs.length && !anyMissing && !(a.api || []).length) plist.appendChild(el("li", { class: "gt-dmuted", text: "core nodes only" }));
+    if ((a.api || []).length) {
+      const li = el("li", { class: "pack" }, el("span", { text: "API nodes" }), el("span", { class: "cnt", text: "(" + a.api.length + ")" }));
+      li.title = a.api.join("\n");
+      plist.appendChild(li);
+    }
+    for (const pk of packs) {
+      const types = a.packs[pk] || [];
+      const li = el("li", { class: "pack" }, el("span", { text: pk }), el("span", { class: "cnt", text: "(" + types.length + ")" }));
+      li.title = types.join("\n");
+      plist.appendChild(li);
+    }
+    // The backend only knows Python-registered classes. Frontend-only nodes
+    // (Reroute, Note, KJ's Get/Set, ...) live solely in LiteGraph's registry,
+    // so a type is "not installed" only when neither side knows it.
+    const lgTypes = (window.LiteGraph && window.LiteGraph.registered_node_types) || {};
+    const missing = (a.missing || []).filter((t) => !(t in lgTypes));
+    if (missing.length) {
+      const li = el("li", { class: "miss", text: "Not installed: " + missing.join(", ") });
+      li.title = "Node types this workflow uses that no loaded pack provides";
+      plist.appendChild(li);
+    }
+  }).catch((e) => {
+    clear(mlist); mlist.appendChild(el("li", { class: "gt-dmuted", text: "analysis failed: " + e.message }));
+  });
 }
 
 function renderCard(f) {

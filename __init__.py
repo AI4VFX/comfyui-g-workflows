@@ -48,6 +48,7 @@ import stat
 import base64
 import shutil
 import hashlib
+import re
 
 from aiohttp import web
 
@@ -94,6 +95,240 @@ THUMB_FILL = (24, 27, 33)  # #181b21 — matches the card background
 # it: _matching_sidecars only matches image extensions, so the renamed file is
 # invisible to the gallery while the bytes stay on disk for manual cleanup.
 REMOVED_SUFFIX = ".removed"
+
+# ── Workflow analysis (Details panel + AutoTag) ─────────────────────────────
+# Per-file summary of a workflow graph: node count, node types, model files
+# referenced by loader widgets, and the model FAMILIES those files belong to.
+# Cached in memory and in ANALYSIS_CACHE keyed by absolute path; an entry is
+# reused only while the file's mtime+size are unchanged.
+ANALYSIS_CACHE = os.path.normpath(os.path.join(_BASE, "user", "g_workflows_analysis.json"))
+ANALYSIS_VERSION = 2   # bump whenever _analyse_workflow's output changes -> cached entries recompute
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+MODEL_FILE_RE = re.compile(r"\.(safetensors|sft|gguf|ckpt|pt|pth|bin|onnx|engine|trt)$", re.I)
+# Node types whose widget strings are free text (notes, prompts) and must never
+# be mistaken for a model reference even if they mention a filename.
+NOTE_TYPES = {"Note", "MarkdownNote", "PrimitiveNode", "PrimitiveString", "PrimitiveStringMultiline",
+              "String", "StringConstant", "StringConstantMultiline", "Text", "TextMultiline",
+              "CLIPTextEncode", "TextEncodeQwenImageEdit"}
+# Loader types that load the DIFFUSION model itself (checkpoint / UNet / DiT).
+# Families are derived from these first; VAE/CLIP/LoRA names only count when no
+# diffusion loader is present (a Wan 2.1 VAE inside a Wan 2.2 graph must not
+# add a second family).
+DIFFUSION_LOADER_RE = re.compile(r"(unet|checkpoint|diffusionmodel|ditmodel|gguf|LoadDiT|ModelLoader$)", re.I)
+AUX_LOADER_RE = re.compile(r"(vae|clip|textencoder|text_encoder|upscale|lora|controlnet|vision|audio|llama|gemma|roformer)", re.I)
+# First match wins per filename; labels are stored lowercase like every tag.
+FAMILY_RULES = [
+    (r"ltx[-_ ]?2[.\-_]?5|ltx25", "ltx 2.5"),
+    (r"ltx[-_ ]?2[.\-_]?3|ltx23", "ltx 2.3"),
+    (r"ltx[-_ ]?2\b|ltx-2-|ltx2[-_]", "ltx 2"),
+    (r"ltxv?[-_ ]?(0\.9|13b|2b)|ltx-video", "ltx 0.9"),
+    (r"wan[-_ ]?2[.\-_]?2|wan22", "wan 2.2"),
+    (r"wan[-_ ]?2[.\-_]?1|wan21", "wan 2.1"),
+    (r"\bwan[-_ ]", "wan"),
+    (r"krea[-_ ]?2", "krea 2"),
+    (r"flux[-_.]?2[-_ ]?klein|\bklein", "flux.2 klein"),
+    (r"flux[-_.]?2", "flux.2"),
+    (r"flux[-_.]?1|flux[-_ ]?(dev|schnell|krea|kontext|fill)|\bflux\b", "flux.1"),
+    (r"qwen[-_ ]?image[-_ ]?edit", "qwen-image-edit"),
+    (r"qwen[-_ ]?image", "qwen-image"),
+    (r"z[-_ ]?image", "z-image"),
+    (r"minimax[-_ ]?h3|minimaxh3|\bh3[-_]", "minimax h3"),
+    (r"minimax[-_ ]?music", "minimax music"),
+    (r"mage[-_ ]?flow", "mageflow"),
+    (r"seedvr2?", "seedvr2"),
+    (r"hunyuan[-_ ]?video|hunyuanvideo", "hunyuanvideo"),
+    (r"hunyuan", "hunyuan"),
+    (r"hidream", "hidream"),
+    (r"pixel[-_ ]?dit", "pixeldit"),
+    (r"boogu", "boogu"),
+    (r"ideogram", "ideogram"),
+    (r"chroma", "chroma"),
+    (r"lumina", "lumina"),
+    (r"anima", "anima"),
+    (r"omnigen", "omnigen"),
+    (r"ace[-_ ]?step|ace[-_ ]?1[.\-_]?5|_ace15", "ace-step"),
+    (r"stable[-_ ]?audio", "stable audio"),
+    (r"fibo|\bbria", "bria fibo"),
+    (r"kandinsky", "kandinsky"),
+    (r"ernie", "ernie"),
+    (r"longcat", "longcat"),
+    (r"\bovis", "ovis"),
+    (r"capybara", "capybara"),
+    (r"cosmos", "cosmos"),
+    (r"mochi", "mochi"),
+    (r"stable[-_ ]?cascade", "stable cascade"),
+    (r"sd3|stable[-_ ]?diffusion[-_ ]?3", "sd3"),
+    (r"sdxl|sd_xl|juggernaut|pony|illustrious|noobai|animagine|realvis", "sdxl"),
+    (r"v1-5|sd15|sd1\.5|sd[-_ ]?1[.\-_]5", "sd1.5"),
+]
+_FAMILY_RULES_C = [(re.compile(rx, re.I), label) for rx, label in FAMILY_RULES]
+_ANALYSIS = None   # abs path -> {"mtime","size","nodes","types","models","families"}
+_ANALYSIS_DIRTY = False
+
+
+def _family_of(model_name):
+    """Map a model filename to its family label, or None if unknown."""
+    for rx, label in _FAMILY_RULES_C:
+        if rx.search(model_name):
+            return label
+    return None
+
+
+def _analyse_workflow(wf):
+    """Pure: workflow dict -> analysis dict (no I/O). Accepts both the UI
+    graph format ({nodes:[{type,widgets_values}]}) and the API prompt format
+    ({id:{class_type,inputs}})."""
+    nodes = []
+    subgraphs = 0
+    if isinstance(wf, dict) and isinstance(wf.get("nodes"), list):
+        # UI graph format. Subgraph bodies live under definitions.subgraphs and
+        # are instantiated on the canvas as nodes whose type is the subgraph's
+        # uuid; walk the bodies so their loaders count too.
+        lists = [wf["nodes"]]
+        defs = wf.get("definitions")
+        if isinstance(defs, dict) and isinstance(defs.get("subgraphs"), list):
+            for g in defs["subgraphs"]:
+                if isinstance(g, dict) and isinstance(g.get("nodes"), list):
+                    lists.append(g["nodes"])
+                    subgraphs += 1
+        for lst in lists:
+            for n in lst:
+                if isinstance(n, dict):
+                    nodes.append((str(n.get("type") or ""), n.get("widgets_values") or []))
+    elif isinstance(wf, dict):
+        for n in wf.values():
+            if isinstance(n, dict) and "class_type" in n:
+                inputs = n.get("inputs") or {}
+                nodes.append((str(n.get("class_type") or ""), list(inputs.values()) if isinstance(inputs, dict) else []))
+    # Subgraph instances carry a uuid as their type; they are not node classes.
+    types = sorted({t for t, _ in nodes if t and not UUID_RE.match(t)})
+    diffusion, aux = [], []
+    seen = set()
+    for t, widgets in nodes:
+        if t in NOTE_TYPES or not isinstance(widgets, (list, tuple)):
+            continue
+        for w in widgets:
+            if not isinstance(w, str) or len(w) > 200 or "\n" in w or w.lower().startswith("http"):
+                continue
+            if not MODEL_FILE_RE.search(w):
+                continue
+            base = w.replace("\\", "/").rsplit("/", 1)[-1]
+            key = base.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            if DIFFUSION_LOADER_RE.search(t) and not AUX_LOADER_RE.search(t):
+                diffusion.append(base)
+            else:
+                aux.append(base)
+    # Families come from the diffusion loaders; a renamed finetune the rules
+    # can't place falls back to what the LoRA / VAE / text-encoder names say.
+    def fams(names):
+        out = []
+        for m in names:
+            f = _family_of(m)
+            if f and f not in out:
+                out.append(f)
+        return out
+    families = fams(diffusion) or fams(aux)
+    return {
+        "nodes": len(nodes),
+        "subgraphs": subgraphs,
+        "types": types,
+        "models": diffusion + aux,
+        "families": families,
+    }
+
+
+def _load_analysis_cache():
+    global _ANALYSIS
+    if _ANALYSIS is not None:
+        return
+    try:
+        with open(ANALYSIS_CACHE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        _ANALYSIS = d if isinstance(d, dict) else {}
+    except Exception:
+        _ANALYSIS = {}
+
+
+def _flush_analysis_cache():
+    global _ANALYSIS_DIRTY
+    if not _ANALYSIS_DIRTY or _ANALYSIS is None:
+        return
+    try:
+        tmp = ANALYSIS_CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_ANALYSIS, f, ensure_ascii=False)
+        os.replace(tmp, ANALYSIS_CACHE)
+        _ANALYSIS_DIRTY = False
+    except OSError as e:
+        print("[G-Workflows] analysis cache write failed: {}".format(e))
+
+
+def _analysis_for(abs_path):
+    """Cached analysis for a workflow file (recomputed when mtime/size move).
+    Returns None if the file can't be read or parsed."""
+    global _ANALYSIS_DIRTY
+    _load_analysis_cache()
+    try:
+        st = os.stat(abs_path)
+    except OSError:
+        return None
+    key = os.path.normcase(abs_path)
+    hit = _ANALYSIS.get(key)
+    if (hit and hit.get("mtime") == st.st_mtime and hit.get("size") == st.st_size
+            and hit.get("v") == ANALYSIS_VERSION):
+        return hit
+    try:
+        with open(abs_path, "r", encoding="utf-8") as f:
+            wf = json.load(f)
+    except Exception:
+        return None
+    a = _analyse_workflow(wf)
+    a["mtime"] = st.st_mtime
+    a["size"] = st.st_size
+    a["v"] = ANALYSIS_VERSION
+    _ANALYSIS[key] = a
+    _ANALYSIS_DIRTY = True
+    return a
+
+
+def _resolve_node_packs(types):
+    """Group node types by the pack that registers them, using the same
+    attribute ComfyUI's /object_info reports as python_module. Returns
+    (packs: {pack_label: [types]}, missing: [types not installed],
+    api: [types served by ComfyUI's hosted API nodes])."""
+    packs = {}
+    missing = []
+    api = []
+    try:
+        import nodes as comfy_nodes
+        mapping = comfy_nodes.NODE_CLASS_MAPPINGS
+    except Exception:
+        return packs, list(types), api
+    for t in types:
+        cls = mapping.get(t)
+        if cls is None:
+            missing.append(t)
+            continue
+        mod = getattr(cls, "RELATIVE_PYTHON_MODULE", "nodes") or "nodes"
+        parts = mod.split(".")
+        if parts[0] == "comfy_api_nodes":
+            api.append(t)
+        elif parts[0] == "custom_nodes" and len(parts) > 1:
+            packs.setdefault(parts[1], []).append(t)
+        # core (nodes / comfy_extras) is not listed
+    return packs, missing, api
+
+
+def _families_of(a, api_types):
+    """Family list for display/tagging: the file-derived families plus "api"
+    when the graph runs any hosted API node (GPT, Seedance, Kling, ...)."""
+    fams = list(a.get("families") or [])
+    if api_types and "api" not in fams:
+        fams.append("api")
+    return fams
 
 
 def _ensure_root():
@@ -653,6 +888,37 @@ try:
                 return _bad("not found", 404)
             with open(abs_path, "r", encoding="utf-8") as f:
                 return web.Response(text=f.read(), content_type="application/json")
+        except web.HTTPException:
+            raise
+        except Exception as e:
+            return _bad(str(e), 500)
+
+    @PromptServer.instance.routes.get("/comfy_greg_templates/analysis")
+    async def route_analysis(request):
+        """?path=&root=  -> node count, model files, families, third-party
+        packs (grouped) and node types that aren't installed. Cached per file."""
+        try:
+            rel = request.query.get("path", "")
+            if not rel.lower().endswith(WORKFLOW_EXT):
+                return _bad("path must end with .json")
+            abs_path = _resolve(rel, _root_of(request.query))
+            if not os.path.isfile(abs_path):
+                return _bad("not found", 404)
+            a = _analysis_for(abs_path)
+            _flush_analysis_cache()
+            if a is None:
+                return _ok({"path": rel, "ok": False})
+            packs, missing, api = _resolve_node_packs(a.get("types") or [])
+            return _ok({
+                "path": rel, "ok": True,
+                "nodes": a.get("nodes", 0),
+                "subgraphs": a.get("subgraphs", 0),
+                "models": a.get("models") or [],
+                "families": _families_of(a, api),
+                "packs": packs,
+                "missing": missing,
+                "api": api,
+            })
         except web.HTTPException:
             raise
         except Exception as e:
