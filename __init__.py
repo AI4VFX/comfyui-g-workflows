@@ -87,6 +87,10 @@ TAGS_EXT = ".tags.txt"
 # Tags written by AutoTag (model families) live in their OWN sidecar so the
 # scanner never edits a tag the user typed. The tree merges both for display.
 AUTOTAGS_EXT = ".autotags.txt"
+# Per-folder manual card order (drag-and-drop in the gallery): a hidden JSON
+# list of workflow file names. Dotfile, so _list_dir never shows it.
+ORDER_FILE = ".gworder.json"
+ORDER_FILE_RECURSE = ".gworder-subfolders.json"   # order of the flat Subfolders view of this folder
 FORBIDDEN_NAME_CHARS = set(':\\/*?"<>|')
 
 # All thumbnails this pack writes are normalized to a single 16:9 JPEG that
@@ -809,6 +813,32 @@ def _autotag_file(abs_path, force=False):
     return fams
 
 
+def _read_order(abs_dir, recurse=False):
+    """Manual card order for a folder view: list of paths relative to the
+    folder (bare names in the plain view), or None if unset."""
+    try:
+        with open(os.path.join(abs_dir, ORDER_FILE_RECURSE if recurse else ORDER_FILE), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return [x for x in d if isinstance(x, str)] if isinstance(d, list) else None
+    except Exception:
+        return None
+
+
+def _write_order(abs_dir, names, recurse=False):
+    """Persist the manual order. Empty list removes the file."""
+    path = os.path.join(abs_dir, ORDER_FILE_RECURSE if recurse else ORDER_FILE)
+    if not names:
+        try:
+            os.remove(path)
+        except (FileNotFoundError, OSError):
+            pass
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(names, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
 def _decode_data_url(data_url):
     if not data_url:
         return None
@@ -904,6 +934,8 @@ def _build_tree(abs_dir, rel_dir, root_base, autotag=True):
         "path": rel_dir,
         "folders": subdirs,
         "files": file_entries,
+        "order": _read_order(abs_dir),
+        "orderRecurse": _read_order(abs_dir, recurse=True),
     }
 
 
@@ -971,6 +1003,43 @@ try:
                 return _bad("not found", 404)
             with open(abs_path, "r", encoding="utf-8") as f:
                 return web.Response(text=f.read(), content_type="application/json")
+        except web.HTTPException:
+            raise
+        except Exception as e:
+            return _bad(str(e), 500)
+
+    @PromptServer.instance.routes.post("/comfy_greg_templates/set_order")
+    async def route_set_order(request):
+        """Body: {root, path: 'folder/rel', order: ['A.json', 'B.json', ...]}.
+        Stores the gallery's manual card order for that folder. Names must be
+        bare file names (no separators); unknown names are kept harmlessly and
+        simply never match a file."""
+        try:
+            data = await request.json()
+            root_id = _root_of(data)
+            base = _base_of(root_id)
+            rel = data.get("path", "") or ""
+            order = data.get("order")
+            recurse = bool(data.get("recurse", False))
+            if not isinstance(order, list) or not all(isinstance(x, str) for x in order):
+                return _bad("'order' must be a list of file names")
+            for x in order:
+                # relative paths only (Subfolders view stores "Sub/Name.json")
+                if "\\" in x or x.startswith("/") or ".." in x.split("/") or any(_is_hidden(seg) for seg in x.split("/")):
+                    return _bad("bad name in order: {}".format(x))
+                if not recurse and "/" in x:
+                    return _bad("bad name in order: {}".format(x))
+            abs_dir = _resolve(rel, root_id) if rel else base
+            if not os.path.isdir(abs_dir):
+                return _bad("folder not found", 404)
+            seen = set()
+            clean = []
+            for x in order:
+                if x not in seen:
+                    seen.add(x)
+                    clean.append(x)
+            _write_order(abs_dir, clean, recurse)
+            return _ok({"path": rel, "order": clean, "recurse": recurse})
         except web.HTTPException:
             raise
         except Exception as e:

@@ -23,6 +23,8 @@ const API_BASE = window.location.origin + API; // absolute backend base
 const APP_DOC  = document;                     // ComfyUI main-window document (canvas, topbar)
 let   doc      = document;                     // document the panel UI currently lives in
 let   detailEl = null, vsplitEl = null;        // right-hand Details panel + its drag splitter
+let   dragPaths = [];                          // workflow paths of the drag in progress (cards/rows)
+let   dragRoot  = null;                        // root id those paths belong to
 const analysisCache = new Map();               // "root|path|mtime" -> /analysis payload
 const CARD_BASE = 160;                         // default grid column min (px); slider & preview base
 const LIST_COL_DEFAULT = [220, 170, 300, 200, 260, 90]; // default list column px widths (Name,Date,Desc,Tags,Path,Size)
@@ -75,6 +77,7 @@ const state = {
   detailW: 320,               // Details panel width px (drag the splitter; persisted)
   focusPath: null,            // file shown in the Details panel = last clicked (transient)
   focusRoot: null,            // root id of focusPath
+  manualSort: false,          // cards follow the folder's drag-and-drop order (.gworder.json)
 };
 
 function loadLS() {
@@ -145,6 +148,7 @@ function loadLS() {
     }
     if (typeof parsed.autoBackupEnabled === "boolean") state.autoBackupEnabled = parsed.autoBackupEnabled;
     if (typeof parsed.detailOpen === "boolean") state.detailOpen = parsed.detailOpen;
+    if (typeof parsed.manualSort === "boolean") state.manualSort = parsed.manualSort;
     if (typeof parsed.detailW === "number" && parsed.detailW >= DETAIL_MIN_W && parsed.detailW <= DETAIL_MAX_W) {
       state.detailW = Math.round(parsed.detailW);
     }
@@ -183,6 +187,7 @@ function saveLS() {
       autoBackupCountPerFile: state.autoBackupCountPerFile,
       detailOpen: state.detailOpen,
       detailW: state.detailW,
+      manualSort: state.manualSort,
     }));
   } catch (_) {}
 }
@@ -434,6 +439,56 @@ async function deleteFiles(paths) {
     await refreshTree(); renderAll(); pingNativeRefresh();
     toast(`Deleted ${r.deleted.length} file(s)`);
   } catch (e) { toast("Delete failed: " + e.message); }
+}
+
+// Drag cards/rows onto a folder in the tree: MOVES the workflow files AND
+// every sidecar (thumbnail, description, favorite, tags, auto tags) via the
+// same /move route Cut → Paste uses; Shift held on the drop = COPY (same
+// /copy route as Copy → Paste, "_copy" suffix on a name clash). Same
+// location only.
+async function moveWorkflowsToFolder(paths, fromRoot, toRoot, toFolder, op) {
+  if (!paths || !paths.length) return;
+  const verb = op === "copy" ? "Copied" : "Moved";
+  if (toRoot === BACKUP_ROOT_ID) { toast("Can't move workflows into _Backup"); return; }
+  if (fromRoot !== toRoot) { toast("Moving between locations isn't supported — use Cut / Paste within one location"); return; }
+  const items = paths.filter((p) => dirName(p) !== toFolder);   // already there = no-op
+  if (!items.length) { toast("Already in that folder"); return; }
+  try {
+    let moved = [], errors = [];
+    if (op === "copy") {
+      for (const src of items) {
+        const target = `${toFolder ? toFolder + "/" : ""}${baseName(src)}`;
+        try {
+          await apiPost("/copy", { from: src, to: target, root: fromRoot });
+          moved.push({ from: src, to: target });
+        } catch (e) {
+          const alt = `${toFolder ? toFolder + "/" : ""}${baseName(src).replace(/\.json$/i, "")}_copy.json`;
+          try { await apiPost("/copy", { from: src, to: alt, root: fromRoot }); moved.push({ from: src, to: alt }); }
+          catch (e2) { errors.push({ item: src, error: e2.message }); }
+        }
+      }
+    } else {
+      const r = await apiPost("/move", { items, toFolder, root: fromRoot });
+      moved = Array.isArray(r.moved) ? r.moved : [];
+      errors = Array.isArray(r.errors) ? r.errors : [];
+    }
+    if (op !== "copy" && state.loadedRootId === fromRoot && items.includes(state.loadedSourcePath)
+        && moved.some((m) => m.from === state.loadedSourcePath)) {
+      state.loadedSourcePath = `${toFolder ? toFolder + "/" : ""}${baseName(state.loadedSourcePath)}`;
+    }
+    if (op !== "copy") for (const m of moved) {
+      state.selection.delete(m.from);
+      if (state.focusPath === m.from) state.focusPath = m.to;
+    }
+    await refreshTree(); renderAll(); pingNativeRefresh();
+    const dest = toFolder || rootDisplayLabel(rootEntry(toRoot) || { id: toRoot });
+    if (errors.length) {
+      const first = errors[0];
+      toast(`${verb} ${moved.length} of ${items.length} to "${dest}" — ${baseName(first.item)}: ${first.error}`);
+    } else {
+      toast(`${verb} ${moved.length} workflow${moved.length === 1 ? "" : "s"} to "${dest}"`);
+    }
+  } catch (e) { toast("Move failed: " + e.message); }
 }
 
 async function pasteHere() {
@@ -1236,6 +1291,10 @@ const CSS = `
 .gt-card .tags .pill.empty:hover { color:#dbe2ea; border-color:#3b82f6; background:#1f2733; }
 .gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
+.gt-lasso { position:absolute; border:1px solid #3b82f6; background:rgba(59,130,246,.15); pointer-events:none; z-index:5; }
+body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:crosshair; }
+.gt-card.ins-before { box-shadow:-4px 0 0 0 #3b82f6, 0 0 0 2px rgba(59,130,246,.25); }
+.gt-card.ins-after  { box-shadow: 4px 0 0 0 #3b82f6, 0 0 0 2px rgba(59,130,246,.25); }
 .gt-empty { padding:16px; opacity:.6; text-align:center; }
 .gt-tag-notice { display:flex; align-items:center; gap:6px; padding:2px 8px; font-size:11px; color:#9aa6b2; }
 .gt-tag-notice .clear { cursor:pointer; opacity:.7; padding:0 2px; user-select:none; }
@@ -2001,6 +2060,7 @@ function buildPanel(host) {
   gridEl       = el("div", { class: "gt-grid" });
   gridWrap.appendChild(breadcrumbEl);
   gridWrap.appendChild(gridEl);
+  installLasso(gridWrap);
 
   // Sidebar: tree + drag splitter + tag pane
   const side      = el("div", { class: "gt-side" });
@@ -2184,6 +2244,13 @@ function renderToolbar() {
     );
     dateBtn.title = "Sort thumbnails by date — click cycles: Newest → Oldest → off";
     toolbarEl.appendChild(dateBtn);
+    const manBtn = mk("Manual", () => {
+      state.manualSort = !state.manualSort;
+      if (state.manualSort) state.cardSort = [];
+      saveLS(); renderAll();
+    }, { primary: !!state.manualSort });
+    manBtn.title = "Show cards in the order you arranged them by drag-and-drop (per folder). Dragging a card turns this on automatically.";
+    toolbarEl.appendChild(manBtn);
   }
   const subBtn = mk("Subfolders", () => {
     state.recurseSubfolders = !state.recurseSubfolders;
@@ -2454,10 +2521,24 @@ function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
     showMenu(e.clientX, e.clientY, items);
   });
   if (!offline) {
-    row.addEventListener("dragover",  (e) => { e.preventDefault(); row.classList.add("drop-target"); });
+    row.addEventListener("dragover",  (e) => {
+      e.preventDefault();
+      const types = e.dataTransfer && e.dataTransfer.types;
+      const internal = types && Array.from(types).indexOf("application/x-gw-workflows") >= 0;
+      if (internal) e.dataTransfer.dropEffect = (isBackup || (dragRoot && dragRoot !== rootId)) ? "none" : (e.shiftKey ? "copy" : "move");
+      row.classList.add("drop-target");
+    });
     row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
     row.addEventListener("drop", async (e) => {
       e.preventDefault(); row.classList.remove("drop-target");
+      let internal = null;
+      try { internal = e.dataTransfer.getData("application/x-gw-workflows"); } catch (_) {}
+      if (internal) {
+        let paths = [];
+        try { paths = JSON.parse(internal); } catch (_) {}
+        await moveWorkflowsToFolder(paths, dragRoot || state.rootId, rootId, node.path, e.shiftKey ? "copy" : "move");
+        return;
+      }
       const files = Array.from(e.dataTransfer?.files || []);
       for (const f of files) {
         if (f.name.toLowerCase().endsWith(".json")) await dropWorkflowFile(rootId, node.path, f);
@@ -2584,8 +2665,62 @@ function cycleCardSort(key) {
   // visible order; the other stays active as a tiebreaker (only observable
   // when two files share a name, e.g. across folders/roots in search/recurse).
   state.cardSort = arr;
+  state.manualSort = false;   // an explicit sort replaces the drag order (kept on disk)
   saveLS();
   renderAll();
+}
+
+// Manual order applies to a folder view in Thumbnail mode — plain or with
+// Subfolders. The order file lives in the VIEWED folder and lists paths
+// relative to it, so the flat Subfolders view has its own order too.
+// Cross-root / filtered views (tag filter, search, List) have no folder.
+function manualOrderApplies() {
+  const q = (state.searchQuery || "").trim();
+  return !state.listView && !state.tagFilter && !q;
+}
+// Why a drag can't reorder right now — shown on drop so an inert drag is
+// never silent.
+function manualOrderBlockedReason() {
+  if (state.listView) return "Reorder works in Thumbnail view — switch off List.";
+  if (state.tagFilter) return "Reorder needs a folder view — clear the tag filter first.";
+  if ((state.searchQuery || "").trim()) return "Reorder needs a folder view — clear the search first.";
+  return null;
+}
+function orderKey(path, basePath) {
+  const pre = basePath ? basePath + "/" : "";
+  return path.startsWith(pre) ? path.slice(pre.length) : path;
+}
+function sortFilesByManual(files, order, basePath) {
+  const idx = new Map((order || []).map((n, i) => [n, i]));
+  const k = (f) => orderKey(f.path, basePath || "");
+  const known = [], rest = [];
+  for (const f of files) (idx.has(k(f)) ? known : rest).push(f);
+  known.sort((a, b) => idx.get(k(a)) - idx.get(k(b)));
+  rest.sort((a, b) => k(a).toLowerCase().localeCompare(k(b).toLowerCase()));
+  return known.concat(rest);
+}
+// Persist the current folder's card order after a drop. `paths` are the
+// dragged files (in their visible order); they land before or after `target`.
+async function reorderCards(paths, targetPath, after) {
+  const moving = new Set(paths);
+  const remaining = visibleOrder.filter((p) => !moving.has(p));
+  let at = targetPath ? remaining.indexOf(targetPath) : remaining.length;
+  if (at < 0) at = remaining.length; else if (after) at += 1;
+  const next = remaining.slice(0, at).concat(paths, remaining.slice(at));
+  // Keep any files of this folder that are currently hidden (Favorites
+  // filter) where they were, so a partial view can't drop them from the file.
+  const node = findFolderNode(state.rootId, state.currentPath);
+  const all = node ? (state.recurseSubfolders ? collectFilesRecursive(node) : (node.files || [])).map((f) => f.path) : [];
+  const placed = new Set(next);
+  const order = next.concat(all.filter((p) => !placed.has(p))).map((p) => orderKey(p, state.currentPath));
+  try {
+    await apiPost("/set_order", { root: state.rootId, path: state.currentPath, order, recurse: !!state.recurseSubfolders });
+    if (node) { if (state.recurseSubfolders) node.orderRecurse = order; else node.order = order; }
+    state.cardSort = [];
+    state.manualSort = true;
+    saveLS();
+    renderAll();
+  } catch (e) { toast("Reorder failed: " + e.message); }
 }
 
 // Column-resize drag. Handle is at the right edge of each header .col. Listen
@@ -2737,19 +2872,104 @@ function renderGrid() {
     gridEl.appendChild(list);
   } else {
     const cs = Array.isArray(state.cardSort) ? state.cardSort : [];
-    const cardFiles = cs.length ? sortFilesByMulti(files, cs) : files;
+    let cardFiles;
+    if (state.manualSort && manualOrderApplies()) {
+      const node = findFolderNode(state.rootId, state.currentPath);
+      const ord = node ? (state.recurseSubfolders ? node.orderRecurse : node.order) : null;
+      cardFiles = sortFilesByManual(files, ord, state.currentPath);
+    } else {
+      cardFiles = cs.length ? sortFilesByMulti(files, cs) : files;
+    }
     visibleOrder = cardFiles.map((x) => x.path);
     for (const f of cardFiles) gridEl.appendChild(renderCard(f));
   }
 }
 
+// Rubber-band selection: mousedown on empty grid space (not a card, not the
+// breadcrumb) and drag a rectangle; every card it touches is selected. Ctrl
+// adds to the current selection. Cards are toggled in place during the drag
+// (no re-render) and the toolbar/details refresh on mouseup.
+function installLasso(wrap) {
+  wrap.style.position = "relative";
+  let box = null, sx = 0, sy = 0, active = false, additive = false, base = null;
+  const contentPt = (e) => {
+    const r = wrap.getBoundingClientRect();
+    return { x: e.clientX - r.left + wrap.scrollLeft, y: e.clientY - r.top + wrap.scrollTop };
+  };
+  wrap.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || state.listView) return;
+    if (e.target.closest(".gt-card, .gt-breadcrumb, .gt-empty, .gt-zoom, input, button")) return;
+    const p = contentPt(e);
+    sx = p.x; sy = p.y; active = false;
+    additive = e.ctrlKey || e.metaKey;
+    base = additive ? new Set(state.selection) : new Set();
+    doc.addEventListener("mousemove", onMove);
+    doc.addEventListener("mouseup", onUp);
+  });
+  function rectsIntersect(a, b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  }
+  function onMove(e) {
+    const p = contentPt(e);
+    if (!active) {
+      if (Math.abs(p.x - sx) < 4 && Math.abs(p.y - sy) < 4) return;
+      active = true;
+      box = el("div", { class: "gt-lasso" });
+      wrap.appendChild(box);
+      doc.body.classList.add("gt-lassoing");
+    }
+    e.preventDefault();
+    const L = Math.min(sx, p.x), T = Math.min(sy, p.y), R = Math.max(sx, p.x), B = Math.max(sy, p.y);
+    Object.assign(box.style, { left: L + "px", top: T + "px", width: (R - L) + "px", height: (B - T) + "px" });
+    const wr = wrap.getBoundingClientRect();
+    const sel = new Set(base);
+    for (const card of gridEl.querySelectorAll(".gt-card")) {
+      const cr = card.getBoundingClientRect();
+      const c = { left: cr.left - wr.left + wrap.scrollLeft, top: cr.top - wr.top + wrap.scrollTop,
+                  right: cr.right - wr.left + wrap.scrollLeft, bottom: cr.bottom - wr.top + wrap.scrollTop };
+      const hit = rectsIntersect({ left: L, top: T, right: R, bottom: B }, c);
+      const path = card.dataset.path;
+      if (hit) sel.add(path); else if (!base.has(path)) sel.delete(path);
+      card.classList.toggle("selected", sel.has(path));
+    }
+    state.selection = sel;
+  }
+  function onUp(e) {
+    doc.removeEventListener("mousemove", onMove);
+    doc.removeEventListener("mouseup", onUp);
+    doc.body.classList.remove("gt-lassoing");
+    if (box) { box.remove(); box = null; }
+    if (!active) return;
+    active = false;
+    const first = visibleOrder.find((p) => state.selection.has(p));
+    if (first) state.selAnchor = first;
+    clickSeq++;   // a lasso supersedes any pending single-click select
+    renderToolbar(); renderDetail();
+  }
+}
+
 function gridDragOver(e) {
   if (e.target.closest(".gt-card")) return;
+  const types = e.dataTransfer && e.dataTransfer.types;
+  if (types && Array.from(types).indexOf("application/x-gw-workflows") >= 0) {
+    e.dataTransfer.dropEffect = manualOrderApplies() ? "move" : "none";
+  }
   e.preventDefault();
 }
 async function gridDrop(e) {
   if (e.target.closest(".gt-card")) return;
   e.preventDefault();
+  let internal = null;
+  try { internal = e.dataTransfer.getData("application/x-gw-workflows"); } catch (_) {}
+  if (internal) {
+    const why = manualOrderBlockedReason();
+    if (why) { toast(why); return; }
+    let paths = [];
+    try { paths = JSON.parse(internal); } catch (_) {}
+    paths = visibleOrder.filter((p) => paths.indexOf(p) >= 0);
+    if (paths.length) await reorderCards(paths, null, true);   // drop on empty space = move to the end
+    return;
+  }
   const files = Array.from(e.dataTransfer?.files || []);
   for (const f of files) {
     if (f.name.toLowerCase().endsWith(".json")) await dropWorkflowFile(state.rootId, state.currentPath, f);
@@ -2773,15 +2993,18 @@ function wireFileEl(elm, f) {
   // target can recognise it and image-thumbnail drops (from outside) stay
   // a separate, unambiguous code path.
   elm.setAttribute("draggable", "true");
+  let clickTimer = null;
   elm.addEventListener("dragstart", (e) => {
     if (!e.dataTransfer) return;
     const paths = state.selection.has(f.path)
       ? Array.from(state.selection)
       : [f.path];
+    dragPaths = paths;
+    dragRoot  = fRoot;
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     try { e.dataTransfer.setData("application/x-gw-workflows", JSON.stringify(paths)); } catch (_) {}
-    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.effectAllowed = "copyMove";   // copy → tag pane, move → reorder in the grid
   });
-  let clickTimer = null;
   elm.addEventListener("click", (e) => {
     focusFileContext(f);   // cross-root search hit → point state at its location
     setFocusFile(f);
@@ -2859,17 +3082,47 @@ function wireFileEl(elm, f) {
       { label: `Delete${sel.length > 1 ? ` (${sel.length})` : ""}`, danger: true, action: () => deleteFiles(sel) },
     ]);
   });
+  const clearInsert = () => elm.classList.remove("drop-target", "ins-before", "ins-after");
   elm.addEventListener("dragover", (e) => {
-    // Don't flash the thumbnail drop-target highlight when the drag is an
-    // internal workflow-drag (those are bound for the tag pane).
     const types = e.dataTransfer && e.dataTransfer.types;
-    if (types && Array.from(types).indexOf("application/x-gw-workflows") >= 0) return;
+    if (types && Array.from(types).indexOf("application/x-gw-workflows") >= 0) {
+      // Internal workflow drag: in a plain Thumbnail folder view this is a
+      // reorder — show an insertion edge on the hovered card. Elsewhere the
+      // drag is bound for the tag pane; leave the card alone.
+      if (elm.classList.contains("gt-row")) return;
+      if (!manualOrderApplies()) { e.preventDefault(); e.dataTransfer.dropEffect = "none"; return; }
+      if (dragPaths.indexOf(f.path) >= 0) return;   // can't drop onto itself
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const r = elm.getBoundingClientRect();
+      const after = (e.clientX - r.left) > r.width / 2;
+      elm.classList.toggle("ins-before", !after);
+      elm.classList.toggle("ins-after", after);
+      return;
+    }
     e.preventDefault();
     elm.classList.add("drop-target");
   });
-  elm.addEventListener("dragleave", () => elm.classList.remove("drop-target"));
+  elm.addEventListener("dragleave", clearInsert);
+  elm.addEventListener("dragend", () => { dragPaths = []; dragRoot = null; clearInsert(); });
   elm.addEventListener("drop", async (e) => {
-    e.preventDefault(); e.stopPropagation(); elm.classList.remove("drop-target");
+    e.preventDefault(); e.stopPropagation();
+    const after = elm.classList.contains("ins-after");
+    const wasInsert = after || elm.classList.contains("ins-before");
+    clearInsert();
+    let internal = null;
+    try { internal = e.dataTransfer.getData("application/x-gw-workflows"); } catch (_) {}
+    if (internal) {
+      const why = manualOrderBlockedReason();
+      if (why) { toast(why); return; }
+      if (!wasInsert) return;
+      let paths = [];
+      try { paths = JSON.parse(internal); } catch (_) {}
+      const vis = new Set(visibleOrder);
+      paths = visibleOrder.filter((p) => paths.indexOf(p) >= 0 && vis.has(p));   // visible order, this folder only
+      if (paths.length && paths.indexOf(f.path) < 0) await reorderCards(paths, f.path, after);
+      return;
+    }
     focusFileContext(f);
     const files = Array.from(e.dataTransfer?.files || []);
     const img = files.find((x) => /^image\/(png|jpe?g|webp)$/i.test(x.type) || /\.(png|jpe?g|webp)$/i.test(x.name));
