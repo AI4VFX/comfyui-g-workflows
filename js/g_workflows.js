@@ -712,8 +712,8 @@ async function assignTagToWorkflows(tag, workflowPaths) {
       }
       if (entry) break;
     }
-    const existing = (entry && Array.isArray(entry.tags)) ? entry.tags : [];
-    if (existing.indexOf(tag) >= 0) { alreadyCount += 1; continue; }
+    const existing = manualTagsOf(entry);
+    if (existing.indexOf(tag) >= 0 || (entry && (entry.tags || []).indexOf(tag) >= 0)) { alreadyCount += 1; continue; }
     const merged = existing.concat([tag]);
     try {
       await apiPost("/set_tags", { path: p, root: rootId, tags: merged });
@@ -761,7 +761,7 @@ async function clearTagsOnSelection(paths) {
       }
       if (entry) break;
     }
-    if (!entry || !Array.isArray(entry.tags) || !entry.tags.length) {
+    if (!entry || !manualTagsOf(entry).length) {
       untaggedCount += 1;
       continue;
     }
@@ -792,9 +792,9 @@ function copyTagsFromWorkflow(workflowPath) {
     }
     if (entry) break;
   }
-  const tags = (entry && Array.isArray(entry.tags)) ? entry.tags.slice() : [];
+  const tags = manualTagsOf(entry).slice();
   if (!tags.length) {
-    toast("Workflow has no tags to copy");
+    toast("Workflow has no manual tags to copy");
     return;
   }
   state.tagClipboard = tags.map((t) => String(t).toLowerCase());
@@ -822,7 +822,7 @@ async function pasteTagsOntoSelection() {
       }
       if (entry) break;
     }
-    const existing = (entry && Array.isArray(entry.tags)) ? entry.tags : [];
+    const existing = manualTagsOf(entry);
     const seen = new Set(existing);
     const merged = existing.slice();
     for (const t of clip) {
@@ -842,19 +842,29 @@ async function pasteTagsOntoSelection() {
 
 async function editTags(workflowPath, rootId) {
   rootId = rootId || state.rootId;
-  let current = [];
+  let current = [], auto = [];
   const folder = findFolderNode(rootId, dirName(workflowPath));
   if (folder) {
     const fe = (folder.files || []).find((x) => x.path === workflowPath);
-    if (fe && Array.isArray(fe.tags)) current = fe.tags.slice();
+    if (fe) { current = manualTagsOf(fe).slice(); auto = (fe.autoTags || []).slice(); }
   }
-  const next = await tagsModal(`Tags — ${baseName(workflowPath)}`, current);
+  const next = await tagsModal(`Tags — ${baseName(workflowPath)}`, current, auto);
   if (next === null) return; // cancelled
   try {
     await apiPost("/set_tags", { path: workflowPath, tags: next, root: rootId });
     await refreshTree(); renderAll();
     toast("Tags saved");
   } catch (e) { toast("Save tags failed: " + e.message); }
+}
+
+async function runAutoTag() {
+  toast("AutoTag: scanning all locations…");
+  try {
+    const r = await apiPost("/autotag_all", {});
+    analysisCache.clear();
+    await refreshTree(); renderAll();
+    toast(`AutoTag: ${r.scanned} scanned · ${r.tagged} tagged · ${r.changed} updated`);
+  } catch (e) { toast("AutoTag failed: " + e.message); }
 }
 
 async function toggleFavorite(f) {
@@ -1051,6 +1061,18 @@ function setFocusFile(f) {
   state.focusRoot = f ? ((f.__root) || state.rootId) : null;
   renderDetail();
 }
+// AutoTag-managed family tags ride on entry.autoTags and are merged into
+// entry.tags for display/filtering. Anything that WRITES tags must start from
+// the manual list only, or the scanner's tags would be copied into .tags.txt.
+function manualTagsOf(entry) {
+  if (!entry) return [];
+  if (Array.isArray(entry.manualTags)) return entry.manualTags;
+  return Array.isArray(entry.tags) ? entry.tags : [];
+}
+function isAutoTag(entry, t) {
+  return !!entry && Array.isArray(entry.autoTags) && entry.autoTags.indexOf(t) >= 0
+    && manualTagsOf(entry).indexOf(t) < 0;
+}
 function findFileEntry(rootId, path) {
   const folder = findFolderNode(rootId, dirName(path));
   return folder ? ((folder.files || []).find((x) => x.path === path) || null) : null;
@@ -1207,6 +1229,9 @@ const CSS = `
 .gt-card .tags .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:10px; cursor:pointer; white-space:nowrap; flex-shrink:0; user-select:none; }
 .gt-card .tags .pill:hover { background:#353c47; }
 .gt-card .tags .pill.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
+.gt-card .tags .pill.auto, .gt-detail .pill.auto, .gt-modal .pill.auto { border-style:dashed; border-color:#4a6fa5; color:#b9d0f0; }
+.gt-modal .gt-autotags-note { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-top:8px; font-size:11px; opacity:.85; }
+.gt-modal .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:11px; white-space:nowrap; }
 .gt-card .tags .pill.empty { font-style:italic; color:#6a737d; cursor:pointer; border-style:dashed; }
 .gt-card .tags .pill.empty:hover { color:#dbe2ea; border-color:#3b82f6; background:#1f2733; }
 .gt-card .tags .pill.more { background:transparent; border:none; color:#6a737d; cursor:default; padding-left:4px; }
@@ -1471,10 +1496,16 @@ async function descModal(title, current) {
 // this with a chip input + autocomplete; the editTags() caller, the
 // shape of the returned value (array of strings), and the modalPromise
 // plumbing all stay the same.
-async function tagsModal(title, currentTags) {
+async function tagsModal(title, currentTags, autoTags) {
   const { bg, body, row } = buildModalShell(title);
   const labelRow = el("div", { class: "label-row" });
   labelRow.textContent = "Type a tag and press Enter or comma to add. Ctrl+Enter to save.";
+  let autoRow = null;
+  if (Array.isArray(autoTags) && autoTags.length) {
+    autoRow = el("div", { class: "gt-autotags-note" }, el("span", { text: "AutoTag: " }));
+    for (const t of autoTags) autoRow.appendChild(el("span", { class: "pill auto", text: t }));
+    autoRow.title = "Set by AutoTag from the workflow's models — managed automatically, not editable here";
+  }
 
   const wrap  = el("div", { class: "gt-chip-wrap" });
   const input = el("input", { class: "gt-chip-input", attrs: { type: "text", placeholder: "Add tag…" } });
@@ -1561,6 +1592,7 @@ async function tagsModal(title, currentTags) {
 
   body.appendChild(labelRow);
   body.appendChild(wrap);
+  if (autoRow) body.appendChild(autoRow);
 
   input.addEventListener("keydown", (e) => {
     const acVisible = ac.classList.contains("visible");
@@ -2094,6 +2126,9 @@ function renderToolbar() {
   }, { primary: state.favoritesOnly });
   favBtn.title = "Show only favorited workflows (★)";
   toolbarEl.appendChild(favBtn);
+  const autoTagBtn = mk("AutoTag", runAutoTag);
+  autoTagBtn.title = "Scan every workflow in every location and tag it with the model families it uses (manual tags are never touched)";
+  toolbarEl.appendChild(autoTagBtn);
   const settingsBtn = mk("⚙ Settings", openSettingsModal, { primary: state.autoBackupEnabled });
   settingsBtn.title = "Auto-backup settings (rolling snapshots of the open workflow)";
   toolbarEl.appendChild(settingsBtn);
@@ -2980,7 +3015,8 @@ function renderDetail() {
   const tagList = Array.isArray(f.tags) ? f.tags : [];
   if (!tagList.length) tagsEl.appendChild(el("span", { class: "gt-dmuted", text: "no tags" }));
   for (const t of tagList) {
-    const pill = el("span", { class: "pill" + (state.tagFilter === t ? " active" : ""), text: t });
+    const pill = el("span", { class: "pill" + (state.tagFilter === t ? " active" : "") + (isAutoTag(f, t) ? " auto" : ""), text: t });
+    pill.title = isAutoTag(f, t) ? "AutoTag (from the workflow's models)" : "";
     pill.addEventListener("click", () => { state.tagFilter = (state.tagFilter === t) ? null : t; renderAll(); });
     tagsEl.appendChild(pill);
   }
@@ -3108,8 +3144,8 @@ function renderCard(f) {
     tags.title = "";
   } else {
     for (const t of tagList) {
-      const pill = el("span", { class: "pill" + (state.tagFilter === t ? " active" : ""), text: t });
-      pill.title = t;
+      const pill = el("span", { class: "pill" + (state.tagFilter === t ? " active" : "") + (isAutoTag(f, t) ? " auto" : ""), text: t });
+      pill.title = isAutoTag(f, t) ? t + " (AutoTag)" : t;
       pill.addEventListener("click", (e) => {
         if (e.shiftKey || e.ctrlKey || e.metaKey) return;   // let modifiers fall through to card selection
         e.stopPropagation();
@@ -3601,12 +3637,18 @@ app.registerExtension({
 
 function addTopbarButton() {
   if (APP_DOC.getElementById("gt-topbar-btn")) return;
+  // Plain image button on the bar's own background; a 6px gap keeps it off
+  // the Manager button. 64px asset shown at 32px so HiDPI stays crisp.
   const btn = el("button", { id: "gt-topbar-btn", style: {
-    background: "#c2882e", color: "#1f2227", border: "1px solid #9c6c22",
-    borderRadius: "4px", padding: "4px 8px", marginLeft: "4px", cursor: "pointer",
-    lineHeight: "1", font: "16px system-ui,-apple-system,Segoe UI,Roboto,sans-serif",
+    background: "transparent", border: "none", borderRadius: "4px",
+    padding: "2px 4px", marginRight: "6px", cursor: "pointer", lineHeight: "0",
+    display: "inline-flex", alignItems: "center",
   } });
-  btn.textContent = "💾";
+  const ico = el("img", { attrs: { src: new URL("./gw-icon.png", import.meta.url).href, alt: "", draggable: "false" },
+    style: { width: "32px", height: "32px", display: "block", transition: "transform .08s, filter .08s" } });
+  btn.appendChild(ico);
+  btn.addEventListener("mouseenter", () => { ico.style.transform = "scale(1.08)"; ico.style.filter = "brightness(1.15)"; });
+  btn.addEventListener("mouseleave", () => { ico.style.transform = ""; ico.style.filter = ""; });
   btn.title = "G-Workflows";
   btn.setAttribute("aria-label", "G-Workflows");
   btn.addEventListener("click", openStandaloneWindow);

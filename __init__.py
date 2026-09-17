@@ -84,6 +84,9 @@ DESC_EXT = ".desc.txt"
 FAV_EXT = ".fav"  # presence of <stem>.fav marks the workflow a favorite
 WORKFLOW_EXT = ".json"
 TAGS_EXT = ".tags.txt"
+# Tags written by AutoTag (model families) live in their OWN sidecar so the
+# scanner never edits a tag the user typed. The tree merges both for display.
+AUTOTAGS_EXT = ".autotags.txt"
 FORBIDDEN_NAME_CHARS = set(':\\/*?"<>|')
 
 # All thumbnails this pack writes are normalized to a single 16:9 JPEG that
@@ -102,7 +105,7 @@ REMOVED_SUFFIX = ".removed"
 # Cached in memory and in ANALYSIS_CACHE keyed by absolute path; an entry is
 # reused only while the file's mtime+size are unchanged.
 ANALYSIS_CACHE = os.path.normpath(os.path.join(_BASE, "user", "g_workflows_analysis.json"))
-ANALYSIS_VERSION = 2   # bump whenever _analyse_workflow's output changes -> cached entries recompute
+ANALYSIS_VERSION = 3   # bump whenever _analyse_workflow's output changes -> cached entries recompute
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 MODEL_FILE_RE = re.compile(r"\.(safetensors|sft|gguf|ckpt|pt|pth|bin|onnx|engine|trt)$", re.I)
 # Node types whose widget strings are free text (notes, prompts) and must never
@@ -286,12 +289,25 @@ def _analysis_for(abs_path):
     except Exception:
         return None
     a = _analyse_workflow(wf)
+    a["api"] = _resolve_node_packs(a.get("types") or [])[2]
     a["mtime"] = st.st_mtime
     a["size"] = st.st_size
     a["v"] = ANALYSIS_VERSION
     _ANALYSIS[key] = a
     _ANALYSIS_DIRTY = True
     return a
+
+
+def _analysis_is_fresh(abs_path):
+    """True when the cached analysis still matches the file on disk."""
+    _load_analysis_cache()
+    try:
+        st = os.stat(abs_path)
+    except OSError:
+        return False
+    hit = _ANALYSIS.get(os.path.normcase(abs_path))
+    return bool(hit and hit.get("mtime") == st.st_mtime and hit.get("size") == st.st_size
+                and hit.get("v") == ANALYSIS_VERSION)
 
 
 def _resolve_node_packs(types):
@@ -733,6 +749,66 @@ def _write_tags(workflow_abs_path, tags):
         f.write("\n".join(normalized) + "\n")
 
 
+def _autotags_path(workflow_abs_path):
+    """Sidecar holding the AutoTag-managed family tags (one per line)."""
+    if not workflow_abs_path.lower().endswith(WORKFLOW_EXT):
+        return None
+    return workflow_abs_path[: -len(WORKFLOW_EXT)] + AUTOTAGS_EXT
+
+
+def _read_autotags(workflow_abs_path):
+    p = _autotags_path(workflow_abs_path)
+    if not p or not os.path.isfile(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return _normalize_tags(f.read())
+    except OSError:
+        return []
+
+
+def _write_autotags(workflow_abs_path, tags):
+    """Overwrite the auto sidecar. Empty list -> delete it."""
+    p = _autotags_path(workflow_abs_path)
+    if not p:
+        return
+    normalized = _normalize_tags(tags)
+    if not normalized:
+        try:
+            os.remove(p)
+        except (FileNotFoundError, OSError):
+            pass
+        return
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(normalized) + "\n")
+
+
+def _merged_tags(manual, auto):
+    """Manual tags first (user order), then auto tags not already present."""
+    out = list(manual)
+    for t in auto:
+        if t not in out:
+            out.append(t)
+    return out
+
+
+def _autotag_file(abs_path, force=False):
+    """Bring <stem>.autotags.txt in line with the workflow's model families.
+    Without force, a file whose cached analysis is still fresh is left alone
+    (so a plain tree build only re-tags files that actually changed).
+    Returns the auto tag list now on disk, or None if the file can't be read."""
+    fresh = _analysis_is_fresh(abs_path)
+    a = _analysis_for(abs_path)
+    if a is None:
+        return None
+    if fresh and not force:
+        return _read_autotags(abs_path)
+    fams = _families_of(a, a.get("api") or [])
+    if fams != _read_autotags(abs_path):
+        _write_autotags(abs_path, fams)
+    return fams
+
+
 def _decode_data_url(data_url):
     if not data_url:
         return None
@@ -787,7 +863,7 @@ def _list_dir(abs_dir):
     return folders, files
 
 
-def _build_tree(abs_dir, rel_dir, root_base):
+def _build_tree(abs_dir, rel_dir, root_base, autotag=True):
     folders, files = _list_dir(abs_dir)
     file_entries = []
     for name in files:
@@ -799,6 +875,10 @@ def _build_tree(abs_dir, rel_dir, root_base):
             size = os.path.getsize(full)
         except OSError:
             mtime, size = 0, 0
+        manual = _read_tags(full)
+        # A workflow saved by ComfyUI itself (not through this panel) is
+        # picked up here: its mtime moved, so it gets re-analysed + re-tagged.
+        auto = (_autotag_file(full) if autotag else _read_autotags(full)) or []
         file_entries.append({
             "name": name,
             "path": rel_file,
@@ -806,7 +886,9 @@ def _build_tree(abs_dir, rel_dir, root_base):
             "thumbMtime": sidecar_mtime,
             "description": _read_desc(full),
             "favorite": _is_fav(full),
-            "tags": _read_tags(full),
+            "tags": _merged_tags(manual, auto),
+            "manualTags": manual,
+            "autoTags": auto,
             "mtime": mtime,
             "size": size,
         })
@@ -815,7 +897,7 @@ def _build_tree(abs_dir, rel_dir, root_base):
     for fname in folders:
         sub_rel = (rel_dir + "/" + fname).lstrip("/")
         sub_abs = os.path.join(abs_dir, fname)
-        subdirs.append(_build_tree(sub_abs, sub_rel, root_base))
+        subdirs.append(_build_tree(sub_abs, sub_rel, root_base, autotag))
 
     return {
         "name": os.path.basename(abs_dir) if rel_dir else "",
@@ -861,7 +943,7 @@ try:
             for rid, r in _ROOTS.items():
                 base = r["abspath"]
                 if os.path.isdir(base):
-                    tree = _build_tree(base, "", base)
+                    tree = _build_tree(base, "", base, autotag=(rid != BACKUP_ROOT_ID))
                     available = True
                 else:
                     tree = None
@@ -873,6 +955,7 @@ try:
                     "tree": tree,
                     "available": available,
                 })
+            _flush_analysis_cache()
             return _ok({"roots": roots_out})
         except Exception as e:
             return _bad(str(e), 500)
@@ -890,6 +973,40 @@ try:
                 return web.Response(text=f.read(), content_type="application/json")
         except web.HTTPException:
             raise
+        except Exception as e:
+            return _bad(str(e), 500)
+
+    @PromptServer.instance.routes.post("/comfy_greg_templates/autotag_all")
+    async def route_autotag_all(request):
+        """Re-analyse every workflow in every root (backups excluded) and
+        rewrite each <stem>.autotags.txt to its model families. Manual
+        .tags.txt files are never touched. Returns counts."""
+        try:
+            _load_roots()
+            scanned = tagged = changed = 0
+            for rid, r in _ROOTS.items():
+                if rid == BACKUP_ROOT_ID:
+                    continue
+                base = r.get("abspath")
+                if not base or not os.path.isdir(base):
+                    continue
+                for dirpath, dirs, names in os.walk(base):
+                    dirs[:] = [d for d in dirs if not _is_hidden(d)]
+                    for name in names:
+                        if _is_hidden(name) or not name.lower().endswith(WORKFLOW_EXT):
+                            continue
+                        full = os.path.join(dirpath, name)
+                        before = _read_autotags(full)
+                        fams = _autotag_file(full, force=True)
+                        scanned += 1
+                        if fams is None:
+                            continue
+                        if fams:
+                            tagged += 1
+                        if fams != before:
+                            changed += 1
+            _flush_analysis_cache()
+            return _ok({"scanned": scanned, "tagged": tagged, "changed": changed})
         except Exception as e:
             return _bad(str(e), 500)
 
@@ -973,6 +1090,8 @@ try:
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8") as f:
                 json.dump(workflow, f, indent=2, ensure_ascii=False)
+            _autotag_file(abs_path, force=True)
+            _flush_analysis_cache()
 
             thumb_rel = None
             if thumb_b64:
@@ -1125,8 +1244,10 @@ try:
             abs_path = _resolve(rel, _root_of(data))
             if not os.path.isfile(abs_path):
                 return _bad("workflow not found", 404)
-            _write_tags(abs_path, tags_in)
-            return _ok({"path": rel, "tags": _read_tags(abs_path)})
+            auto = _read_autotags(abs_path)
+            _write_tags(abs_path, [t for t in _normalize_tags(tags_in) if t not in auto])
+            return _ok({"path": rel, "tags": _merged_tags(_read_tags(abs_path), auto),
+                        "manualTags": _read_tags(abs_path), "autoTags": auto})
         except web.HTTPException:
             raise
         except Exception as e:
@@ -1158,24 +1279,26 @@ try:
                 continue
             for dirpath, _dirs, names in os.walk(base):
                 for name in names:
-                    if not name.lower().endswith(TAGS_EXT):
-                        continue
-                    sidecar = os.path.join(dirpath, name)
-                    wf = sidecar[: -len(TAGS_EXT)] + WORKFLOW_EXT
-                    tags = _read_tags(wf)
-                    if src not in tags:
-                        continue
-                    # Replace src -> dst, dedupe preserving order.
-                    new_tags = []
-                    seen = set()
-                    for t in tags:
-                        nt = dst if t == src else t
-                        if nt in seen:
+                    for ext, reader, writer in ((TAGS_EXT, _read_tags, _write_tags),
+                                                (AUTOTAGS_EXT, _read_autotags, _write_autotags)):
+                        if not name.lower().endswith(ext):
                             continue
-                        seen.add(nt)
-                        new_tags.append(nt)
-                    _write_tags(wf, new_tags)
-                    affected += 1
+                        sidecar = os.path.join(dirpath, name)
+                        wf = sidecar[: -len(ext)] + WORKFLOW_EXT
+                        tags = reader(wf)
+                        if src not in tags:
+                            continue
+                        # Replace src -> dst, dedupe preserving order.
+                        new_tags = []
+                        seen = set()
+                        for t in tags:
+                            nt = dst if t == src else t
+                            if nt in seen:
+                                continue
+                            seen.add(nt)
+                            new_tags.append(nt)
+                        writer(wf, new_tags)
+                        affected += 1
         return web.json_response({"success": True, "affected": affected})
 
     @PromptServer.instance.routes.post("/comfy_greg_templates/delete_tag")
@@ -1201,15 +1324,17 @@ try:
                 continue
             for dirpath, _dirs, names in os.walk(base):
                 for name in names:
-                    if not name.lower().endswith(TAGS_EXT):
-                        continue
-                    sidecar = os.path.join(dirpath, name)
-                    wf = sidecar[: -len(TAGS_EXT)] + WORKFLOW_EXT
-                    tags = _read_tags(wf)
-                    if src not in tags:
-                        continue
-                    _write_tags(wf, [t for t in tags if t != src])
-                    affected += 1
+                    for ext, reader, writer in ((TAGS_EXT, _read_tags, _write_tags),
+                                                (AUTOTAGS_EXT, _read_autotags, _write_autotags)):
+                        if not name.lower().endswith(ext):
+                            continue
+                        sidecar = os.path.join(dirpath, name)
+                        wf = sidecar[: -len(ext)] + WORKFLOW_EXT
+                        tags = reader(wf)
+                        if src not in tags:
+                            continue
+                        writer(wf, [t for t in tags if t != src])
+                        affected += 1
         return web.json_response({"success": True, "affected": affected})
 
     @PromptServer.instance.routes.post("/comfy_greg_templates/set_fav")
@@ -1281,6 +1406,10 @@ try:
             if os.path.isfile(src_tags):
                 os.rename(src_tags, dst_stem + TAGS_EXT)
                 moved_sidecars.append(_rel(dst_stem + TAGS_EXT, base))
+            src_auto = src_stem + AUTOTAGS_EXT
+            if os.path.isfile(src_auto):
+                os.rename(src_auto, dst_stem + AUTOTAGS_EXT)
+                moved_sidecars.append(_rel(dst_stem + AUTOTAGS_EXT, base))
             return _ok({
                 "from": src_rel,
                 "to": _rel(dst, base),
@@ -1332,6 +1461,10 @@ try:
             if os.path.isfile(src_tags):
                 shutil.copy2(src_tags, dst_stem + TAGS_EXT)
                 copied_sidecars.append(_rel(dst_stem + TAGS_EXT, base))
+            src_auto = src_stem + AUTOTAGS_EXT
+            if os.path.isfile(src_auto):
+                shutil.copy2(src_auto, dst_stem + AUTOTAGS_EXT)
+                copied_sidecars.append(_rel(dst_stem + AUTOTAGS_EXT, base))
             return _ok({
                 "from": src_rel,
                 "to": _rel(dst, base),
@@ -1387,6 +1520,9 @@ try:
                     src_tags = src_stem + TAGS_EXT
                     if os.path.isfile(src_tags):
                         os.rename(src_tags, dst_stem + TAGS_EXT)
+                    src_auto = src_stem + AUTOTAGS_EXT
+                    if os.path.isfile(src_auto):
+                        os.rename(src_auto, dst_stem + AUTOTAGS_EXT)
                     moved.append({
                         "from": rel,
                         "to": _rel(dst, base),
@@ -1449,6 +1585,13 @@ try:
                         try:
                             os.remove(tags_abs)
                             removed_here.append(_rel(tags_abs, base))
+                        except OSError:
+                            pass
+                    auto_abs = _autotags_path(abs_path)
+                    if auto_abs and os.path.isfile(auto_abs):
+                        try:
+                            os.remove(auto_abs)
+                            removed_here.append(_rel(auto_abs, base))
                         except OSError:
                             pass
                     deleted.extend(removed_here)
