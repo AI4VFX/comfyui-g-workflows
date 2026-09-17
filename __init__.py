@@ -1908,24 +1908,35 @@ try:
 
     @PromptServer.instance.routes.get("/comfy_greg_templates/meta")
     async def route_meta_get(request):
-        """Return once-per-install flags (currently the AutoSave notice)."""
+        """Return once-per-install flags (AutoSave notice) and the global
+        favorites order (list of 'rootId|relPath', drag-arranged by the user)."""
         try:
             m = _read_meta()
-            return _ok({"autosaveNoticeShown": bool(m.get("autosaveNoticeShown"))})
+            fo = m.get("favOrder")
+            return _ok({"autosaveNoticeShown": bool(m.get("autosaveNoticeShown")),
+                        "favOrder": [x for x in fo if isinstance(x, str)] if isinstance(fo, list) else []})
         except Exception as e:
             return _bad(str(e), 500)
 
     @PromptServer.instance.routes.post("/comfy_greg_templates/meta")
     async def route_meta_set(request):
-        """Body: {autosaveNoticeShown: bool}. Persists the marker so the
-        first-run notice never reappears."""
+        """Body: {autosaveNoticeShown?: bool, favOrder?: ['root|path', ...]}.
+        Persists whichever keys are present."""
         try:
             data = await request.json()
             m = _read_meta()
             if "autosaveNoticeShown" in data:
                 m["autosaveNoticeShown"] = bool(data.get("autosaveNoticeShown"))
+            if "favOrder" in data:
+                fo = data.get("favOrder")
+                if not isinstance(fo, list) or not all(isinstance(x, str) for x in fo):
+                    return _bad("'favOrder' must be a list of strings")
+                seen = set()
+                m["favOrder"] = [x for x in fo if not (x in seen or seen.add(x))]
             _write_meta(m)
-            return _ok({"autosaveNoticeShown": bool(m.get("autosaveNoticeShown"))})
+            fo = m.get("favOrder")
+            return _ok({"autosaveNoticeShown": bool(m.get("autosaveNoticeShown")),
+                        "favOrder": fo if isinstance(fo, list) else []})
         except Exception as e:
             return _bad(str(e), 500)
 

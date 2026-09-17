@@ -79,6 +79,7 @@ const state = {
   focusRoot: null,            // root id of focusPath
   manualSort: false,          // cards follow the folder's drag-and-drop order (.gworder.json)
   focusMode: false,           // Focus: thumbnails only — breadcrumb, card text and Details hidden
+  favOrder: [],               // global favorites order: "rootId|relPath" (server meta; drag-arranged)
 };
 
 function loadLS() {
@@ -1332,9 +1333,11 @@ body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:cross
 .gt-menu { position:fixed; background:#20242c; border:1px solid #3a414e; border-radius:6px; padding:4px 0; box-shadow:0 6px 24px rgba(0,0,0,.45); z-index:9999; min-width:180px; color:#dbe2ea; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
 .gt-menu .item { padding:6px 14px; cursor:pointer; font-size:13px; }
 .gt-menu.gt-favmenu { max-height:70vh; overflow:auto; min-width:220px; max-width:360px; }
-.gt-menu.gt-favmenu .item { display:flex; align-items:center; gap:8px; padding:3px 12px 3px 8px; }
-.gt-menu .gt-favthumb { flex:none; width:44px; height:25px; border-radius:3px; background:#181b21 center/cover no-repeat; border:1px solid #353c47; }
+.gt-menu.gt-favmenu .item { display:flex; align-items:center; padding:6px 14px; }
 .gt-menu .gt-favname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gt-menu.gt-favmenu .item.dragging { opacity:.4; }
+.gt-menu.gt-favmenu .item.ins-before { box-shadow:inset 0 2px 0 #3b82f6; }
+.gt-menu.gt-favmenu .item.ins-after  { box-shadow:inset 0 -2px 0 #3b82f6; }
 .gt-menu .gt-favhead { padding:5px 14px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.55; border-bottom:1px solid #3a414e; margin-bottom:4px; }
 .gt-menu .gt-favhint { padding:4px 14px 8px; font-size:12px; opacity:.6; font-style:italic; }
 .gt-menu .item:hover { background:#3b82f6; color:#fff; }
@@ -2705,6 +2708,29 @@ function manualOrderBlockedReason() {
   if ((state.searchQuery || "").trim()) return "Reorder needs a folder view — clear the search first.";
   return null;
 }
+// Favorites have ONE global order (they span folders and roots), kept in
+// the server's meta file. The topbar menu and the panel's Favorites view
+// (with Manual sort) both follow it; unknown favorites append A→Z.
+function favKey(rootId, path) { return (rootId || "default") + "|" + path; }
+async function loadFavOrder() {
+  try {
+    const m = await apiGet("/meta");
+    state.favOrder = Array.isArray(m.favOrder) ? m.favOrder.filter((x) => typeof x === "string") : [];
+  } catch (_) { /* old backend: keep whatever we have */ }
+}
+async function saveFavOrder(order) {
+  state.favOrder = order.slice();
+  try { await apiPost("/meta", { favOrder: order }); }
+  catch (e) { toast("Saving favorites order failed: " + e.message); }
+}
+function sortByFavOrder(items, order, keyOf, nameOf) {
+  const idx = new Map((order || []).map((k, i) => [k, i]));
+  const known = [], rest = [];
+  for (const it of items) (idx.has(keyOf(it)) ? known : rest).push(it);
+  known.sort((a, b) => idx.get(keyOf(a)) - idx.get(keyOf(b)));
+  rest.sort((a, b) => nameOf(a).toLowerCase().localeCompare(nameOf(b).toLowerCase()));
+  return known.concat(rest);
+}
 function orderKey(path, basePath) {
   const pre = basePath ? basePath + "/" : "";
   return path.startsWith(pre) ? path.slice(pre.length) : path;
@@ -2726,6 +2752,18 @@ async function reorderCards(paths, targetPath, after) {
   let at = targetPath ? remaining.indexOf(targetPath) : remaining.length;
   if (at < 0) at = remaining.length; else if (after) at += 1;
   const next = remaining.slice(0, at).concat(paths, remaining.slice(at));
+  if (state.favoritesOnly) {
+    // Favorites view: this is the GLOBAL favorites order, not the folder's.
+    const keys = next.map((p) => favKey(state.rootId, p));
+    const placed = new Set(keys);
+    const order = keys.concat(state.favOrder.filter((k) => !placed.has(k)));
+    await saveFavOrder(order);
+    state.cardSort = [];
+    state.manualSort = true;
+    saveLS();
+    renderAll();
+    return;
+  }
   // Keep any files of this folder that are currently hidden (Favorites
   // filter) where they were, so a partial view can't drop them from the file.
   const node = findFolderNode(state.rootId, state.currentPath);
@@ -2893,7 +2931,10 @@ function renderGrid() {
   } else {
     const cs = Array.isArray(state.cardSort) ? state.cardSort : [];
     let cardFiles;
-    if (state.manualSort && manualOrderApplies()) {
+    if (state.manualSort && manualOrderApplies() && state.favoritesOnly) {
+      cardFiles = sortByFavOrder(files, state.favOrder,
+        (f) => favKey(f.__root || state.rootId, f.path), (f) => baseName(f.path));
+    } else if (state.manualSort && manualOrderApplies()) {
       const node = findFolderNode(state.rootId, state.currentPath);
       const ord = node ? (state.recurseSubfolders ? node.orderRecurse : node.order) : null;
       cardFiles = sortFilesByManual(files, ord, state.currentPath);
@@ -3686,6 +3727,7 @@ async function mountInto(host) {
   }
   state.expanded.add(ekey(state.rootId, ""));
   state.searchQuery = "";   // start each popup session unfiltered
+  await loadFavOrder();
   renderAll();
 }
 
@@ -3912,6 +3954,8 @@ app.registerExtension({
 // Favorites menu under the topbar icon (main window). Reads the tree if the
 // panel hasn't loaded it yet; every root except _Backup, sorted by name.
 let favMenu = null;
+let favDragKey = null;   // favorites-menu row being dragged
+function clearFavInsert(menu) { for (const x of menu.querySelectorAll(".ins-before,.ins-after")) x.classList.remove("ins-before", "ins-after"); }
 function closeFavoritesMenu() {
   if (favMenu) { favMenu.remove(); favMenu = null; }
   APP_DOC.removeEventListener("pointerdown", onFavDocDown, true);
@@ -3924,14 +3968,16 @@ async function showFavoritesMenu(anchor) {
   closeFavoritesMenu();
   injectCSS(APP_DOC);
   if (!state.roots.length) { try { await refreshTree(); } catch (_) {} }
+  await loadFavOrder();
   const favs = [];
   for (const r of state.roots) {
     if (!r || !r.tree || r.id === BACKUP_ROOT_ID) continue;
     for (const f of collectFilesRecursive(r.tree)) {
-      if (f.favorite) favs.push({ root: r.id, rootLabel: rootDisplayLabel(r), path: f.path, thumb: f.thumb, bust: f.thumbMtime || f.mtime || 0 });
+      if (f.favorite) favs.push({ root: r.id, rootLabel: rootDisplayLabel(r), path: f.path });
     }
   }
-  favs.sort((a, b) => baseName(a.path).toLowerCase().localeCompare(baseName(b.path).toLowerCase()));
+  const ordered = sortByFavOrder(favs, state.favOrder, (fv) => favKey(fv.root, fv.path), (fv) => baseName(fv.path));
+  favs.length = 0; favs.push(...ordered);
   const menu = APP_DOC.createElement("div");
   menu.className = "gt-menu gt-favmenu";
   const head = APP_DOC.createElement("div");
@@ -3947,14 +3993,44 @@ async function showFavoritesMenu(anchor) {
   for (const fv of favs) {
     const item = APP_DOC.createElement("div");
     item.className = "item";
-    const th = APP_DOC.createElement("span");
-    th.className = "gt-favthumb";
-    if (fv.thumb) th.style.backgroundImage = `url("${API_BASE}/thumb?path=${encodeURIComponent(fv.thumb)}&root=${encodeURIComponent(fv.root)}&t=${fv.bust}")`;
     const lab = APP_DOC.createElement("span");
     lab.className = "gt-favname";
     lab.textContent = baseName(fv.path).replace(/\.json$/i, "");
-    item.appendChild(th); item.appendChild(lab);
-    item.title = (fv.rootLabel ? fv.rootLabel + " / " : "") + fv.path;
+    item.appendChild(lab);
+    item.title = (fv.rootLabel ? fv.rootLabel + " / " : "") + fv.path + "\n(drag to rearrange)";
+    // Drag rows to arrange; the new order is saved and the menu stays open.
+    item.draggable = true;
+    item.dataset.favKey = favKey(fv.root, fv.path);
+    item.addEventListener("dragstart", (e) => {
+      favDragKey = item.dataset.favKey;
+      try { e.dataTransfer.setData("application/x-gw-fav", favDragKey); } catch (_) {}
+      e.dataTransfer.effectAllowed = "move";
+      item.classList.add("dragging");
+    });
+    item.addEventListener("dragend", () => { favDragKey = null; item.classList.remove("dragging"); clearFavInsert(menu); });
+    item.addEventListener("dragover", (e) => {
+      if (!favDragKey || favDragKey === item.dataset.favKey) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const r = item.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      clearFavInsert(menu);
+      item.classList.add(after ? "ins-after" : "ins-before");
+    });
+    item.addEventListener("drop", async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const after = item.classList.contains("ins-after");
+      clearFavInsert(menu);
+      const src = favDragKey; favDragKey = null;
+      if (!src || src === item.dataset.favKey) return;
+      const keys = Array.from(menu.querySelectorAll(".item")).map((x) => x.dataset.favKey).filter((k) => k !== src);
+      let at = keys.indexOf(item.dataset.favKey);
+      if (at < 0) at = keys.length; else if (after) at += 1;
+      keys.splice(at, 0, src);
+      await saveFavOrder(keys);
+      if (state.panelMounted) renderGrid();
+      showFavoritesMenu(anchor);   // rebuild in place, stays open
+    });
     item.addEventListener("click", (e) => {
       e.stopPropagation();
       closeFavoritesMenu();
