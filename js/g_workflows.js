@@ -1071,9 +1071,9 @@ const CSS = `
 .gt-toolbar button.primary:hover { background:#2563eb; }
 .gt-toolbar button:disabled { opacity:.4; cursor:not-allowed; }
 .gt-toolbar .gt-spacer { flex:1; }
-.gt-search { display:inline-flex; align-items:center; gap:4px; background:#13161a; border:1px solid #3a414e; border-radius:4px; padding:2px 4px 2px 8px; }
+.gt-search { flex:1; min-width:150px; display:inline-flex; align-items:center; gap:4px; background:#13161a; border:1px solid #3a414e; border-radius:4px; padding:2px 4px 2px 8px; }
 .gt-search:focus-within { border-color:#3b82f6; }
-.gt-search-in { background:transparent; color:#dbe2ea; border:none; outline:none; padding:3px 0; font-size:12px; width:150px; flex:0 0 auto; }
+.gt-search-in { background:transparent; color:#dbe2ea; border:none; outline:none; padding:3px 0; font-size:12px; width:0; min-width:60px; flex:1 1 auto; }
 .gt-search-in::placeholder { color:#7c8694; }
 .gt-search-x { background:transparent; color:#9aa6b2; border:1px solid transparent; border-radius:3px; padding:1px 7px 2px; cursor:pointer; font:600 10px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; text-transform:uppercase; letter-spacing:.3px; }
 .gt-search-x:hover { background:#2b313a; color:#dbe2ea; }
@@ -1128,14 +1128,14 @@ const CSS = `
 .gt-fav { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; font-size:15px; line-height:1; cursor:pointer; color:transparent; -webkit-text-stroke:1.4px #d8dde6; text-shadow:0 1px 2px rgba(0,0,0,.6); user-select:none; flex:none; transition:transform .08s; }
 .gt-fav.on { color:#ffd400; -webkit-text-stroke:1.4px #ffd400; }
 .gt-fav:hover { transform:scale(1.18); }
-.gt-card > .gt-fav { position:absolute; bottom:6px; right:6px; width:calc(39px * var(--gt-fav-scale,1)); height:calc(39px * var(--gt-fav-scale,1)); font-size:calc(27px * var(--gt-fav-scale,1)); z-index:2; }
+.gt-card > .gt-fav { position:absolute; top:4px; right:4px; width:calc(30px * var(--gt-fav-scale,1)); height:calc(30px * var(--gt-fav-scale,1)); font-size:calc(21px * var(--gt-fav-scale,1)); z-index:2; }
 .gt-row .col-name { display:flex; align-items:center; gap:5px; overflow:visible; }
 .gt-row .col-name .gt-rowname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.gt-card .meta { padding:6px calc(39px * var(--gt-fav-scale,1) + 14px) 6px 8px; display:flex; flex-direction:column; flex:1; }
+.gt-card .meta { padding:5px 8px 6px; display:flex; flex-direction:column; flex:1; gap:2px; }
 .gt-card .name { font-size:12px; word-break:break-word; }
-.gt-card .date { font-size:12px; opacity:.55; margin-top:2px; }
-.gt-card .desc { font-size:12px; color:#ffe14d; opacity:1; margin-top:3px; line-height:1.3; min-height:2.6em; max-height:2.6em; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
-.gt-card .tags { margin-top:auto; padding-top:6px; display:flex; flex-wrap:nowrap; overflow:hidden; gap:4px; min-height:18px; }
+.gt-card .date { font-size:12px; opacity:.55; }
+.gt-card .desc { font-size:12px; color:#ffe14d; opacity:1; margin-top:auto; padding-top:2px; line-height:1.3; height:1.3em; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; word-break:break-all; }
+.gt-card .tags { display:flex; flex-wrap:nowrap; overflow:hidden; gap:4px; min-height:18px; }
 .gt-card .tags .pill { background:#2b313a; border:1px solid #3a414e; color:#dbe2ea; border-radius:10px; padding:1px 8px 2px; font-size:10px; cursor:pointer; white-space:nowrap; flex-shrink:0; user-select:none; }
 .gt-card .tags .pill:hover { background:#353c47; }
 .gt-card .tags .pill.active { background:#3b82f6; border-color:#3b82f6; color:#fff; }
@@ -2005,27 +2005,6 @@ function renderToolbar() {
   const settingsBtn = mk("⚙ Settings", openSettingsModal, { primary: state.autoBackupEnabled });
   settingsBtn.title = "Auto-backup settings (rolling snapshots of the open workflow)";
   toolbarEl.appendChild(settingsBtn);
-  toolbarEl.appendChild(el("div", { class: "gt-spacer" }));
-  if (!state.listView) {
-    const cs = Array.isArray(state.cardSort) ? state.cardSort : [];
-    const lvl = (k) => cs.find((s) => s.key === k);
-    const nameLv = lvl("name");
-    const nameBtn = mk(
-      nameLv ? (nameLv.dir === "asc" ? "A to Z" : "Z to A") : "Name",
-      () => cycleCardSort("name"),
-      { primary: !!nameLv },
-    );
-    nameBtn.title = "Sort thumbnails by filename — click cycles: A to Z → Z to A → off";
-    toolbarEl.appendChild(nameBtn);
-    const dateLv = lvl("date");
-    const dateBtn = mk(
-      dateLv ? (dateLv.dir === "asc" ? "Newest" : "Oldest") : "Date",
-      () => cycleCardSort("date"),
-      { primary: !!dateLv },
-    );
-    dateBtn.title = "Sort thumbnails by date — click cycles: Newest → Oldest → off";
-    toolbarEl.appendChild(dateBtn);
-  }
   const searchWrap = el("div", { class: "gt-search" });
   const searchInput = el("input", { class: "gt-search-in", attrs: { type: "text", placeholder: "Search…" } });
   searchInput.value = state.searchQuery || "";
@@ -2059,6 +2038,26 @@ function renderToolbar() {
   searchWrap.appendChild(globalBtn);
   searchWrap.appendChild(clearX);
   toolbarEl.appendChild(searchWrap);
+  if (!state.listView) {
+    const cs = Array.isArray(state.cardSort) ? state.cardSort : [];
+    const lvl = (k) => cs.find((s) => s.key === k);
+    const nameLv = lvl("name");
+    const nameBtn = mk(
+      nameLv ? (nameLv.dir === "asc" ? "A to Z" : "Z to A") : "Name",
+      () => cycleCardSort("name"),
+      { primary: !!nameLv },
+    );
+    nameBtn.title = "Sort thumbnails by filename — click cycles: A to Z → Z to A → off";
+    toolbarEl.appendChild(nameBtn);
+    const dateLv = lvl("date");
+    const dateBtn = mk(
+      dateLv ? (dateLv.dir === "asc" ? "Newest" : "Oldest") : "Date",
+      () => cycleCardSort("date"),
+      { primary: !!dateLv },
+    );
+    dateBtn.title = "Sort thumbnails by date — click cycles: Newest → Oldest → off";
+    toolbarEl.appendChild(dateBtn);
+  }
   const subBtn = mk("Subfolders", () => {
     state.recurseSubfolders = !state.recurseSubfolders;
     saveLS();
@@ -2845,7 +2844,7 @@ function renderCard(f) {
   if (f.mtime) date.title = new Date(f.mtime * 1000).toLocaleString();
   const desc = el("div", { class: "desc" });
   desc.textContent = (f.description || "").trim();
-  meta.appendChild(name); meta.appendChild(date); meta.appendChild(desc);
+  meta.appendChild(name); meta.appendChild(date);
   const tags = el("div", { class: "tags" });
   const tagList = Array.isArray(f.tags) ? f.tags : [];
   if (!tagList.length) {
@@ -2879,6 +2878,7 @@ function renderCard(f) {
     tags.title = tagList.join(", ");
   }
   meta.appendChild(tags);
+  meta.appendChild(desc);
   tags.addEventListener("dblclick", (e) => {
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     // Ignore dbl-clicks on actual (non-empty) pills — single-click already
