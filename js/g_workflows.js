@@ -1297,6 +1297,10 @@ const CSS = `
 .gt-card.drop-target { outline:2px dashed #f59e0b; outline-offset:-2px; }
 .gt-root.gt-focus .gt-breadcrumb, .gt-root.gt-focus .gt-card .meta, .gt-root.gt-focus .gt-detail, .gt-root.gt-focus .gt-vsplit { display:none; }
 .gt-root.gt-focus .gt-grid-wrap { padding-top:8px; }
+.gt-dragstack { position:fixed; top:-2000px; left:-2000px; padding:0 12px 12px 0; pointer-events:none; }
+.gt-dragstack .face { position:relative; border-radius:6px; border:1px solid #3b82f6; background:#181b21 center/cover no-repeat; box-shadow:5px 5px 0 -1px #262b34, 5px 5px 0 0 #3a414e, 10px 10px 0 -1px #262b34, 10px 10px 0 0 #3a414e, 0 6px 18px rgba(0,0,0,.5); }
+.gt-dragstack.row .face { padding:6px 12px; font:12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:#dbe2ea; background:#262b34; white-space:nowrap; max-width:260px; overflow:hidden; text-overflow:ellipsis; }
+.gt-dragstack .badge { position:absolute; top:-8px; right:4px; min-width:22px; height:22px; padding:0 6px; border-radius:11px; background:#3b82f6; color:#fff; font:700 12px/22px system-ui,-apple-system,Segoe UI,Roboto,sans-serif; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.5); }
 .gt-lasso { position:absolute; border:1px solid #3b82f6; background:rgba(59,130,246,.15); pointer-events:none; z-index:5; }
 body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:crosshair; }
 .gt-card.ins-before { box-shadow:-4px 0 0 0 #3b82f6, 0 0 0 2px rgba(59,130,246,.25); }
@@ -2959,6 +2963,33 @@ function renderGrid() {
   }
 }
 
+// The browser's drag ghost is the grabbed element alone, which misrepresents
+// a multi-selection drag. Hand it a temporary "stack": the grabbed card's
+// thumbnail with two card outlines behind it and a count badge. Rows get a
+// compact name + badge. The node is removed right after the ghost is snapped.
+function setGroupDragImage(e, elm, count) {
+  if (!e.dataTransfer || typeof e.dataTransfer.setDragImage !== "function") return;
+  const isCard = elm.classList.contains("gt-card");
+  const ghost = el("div", { class: "gt-dragstack" + (isCard ? "" : " row") });
+  if (isCard) {
+    const src = elm.querySelector(".thumb");
+    const w = Math.max(120, Math.min(220, Math.round(elm.getBoundingClientRect().width)));
+    const face = el("div", { class: "face" });
+    face.style.width = w + "px";
+    face.style.height = Math.round(w * 9 / 16) + "px";
+    if (src && src.style.backgroundImage) face.style.backgroundImage = src.style.backgroundImage;
+    ghost.appendChild(face);
+  } else {
+    const name = elm.querySelector(".gt-rowname");
+    ghost.appendChild(el("div", { class: "face", text: name ? name.textContent : "" }));
+  }
+  ghost.appendChild(el("div", { class: "badge", text: String(count) }));
+  doc.body.appendChild(ghost);
+  const r = ghost.querySelector(".face").getBoundingClientRect();
+  e.dataTransfer.setDragImage(ghost, Math.round(r.width / 2), Math.round(r.height / 2));
+  setTimeout(() => ghost.remove(), 0);
+}
+
 // Keyboard navigation over the visible files: arrows move the selection
 // (Left/Right by one card, Up/Down by one grid row — or one row in List),
 // Shift extends the range from the anchor, Home/End jump, Enter loads. Typing
@@ -3139,6 +3170,7 @@ function wireFileEl(elm, f) {
     dragPaths = paths;
     dragRoot  = fRoot;
     if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+    if (paths.length > 1) setGroupDragImage(e, elm, paths.length);
     try { e.dataTransfer.setData("application/x-gw-workflows", JSON.stringify(paths)); } catch (_) {}
     e.dataTransfer.effectAllowed = "copyMove";   // copy → tag pane, move → reorder in the grid
   });
