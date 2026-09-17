@@ -250,8 +250,8 @@ async function pingNativeRefresh() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Workflow load / save
 // ─────────────────────────────────────────────────────────────────────────────
-async function loadWorkflow(relPath) {
-  const rootId = state.rootId;
+async function loadWorkflow(relPath, rootId) {
+  rootId = rootId || state.rootId;
   // Always fetch the JSON ourselves so we load the disk content directly,
   // not whatever stale activeState a ComfyWorkflow object might carry.
   const r = await fetch(API_BASE + "/workflow?path=" + encodeURIComponent(relPath)
@@ -1331,6 +1331,12 @@ body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:cross
 .gt-grid.gt-aslist .gt-row .col, .gt-grid.gt-aslist .gt-lhead .col { font-size:var(--gt-lfont,12px); }
 .gt-menu { position:fixed; background:#20242c; border:1px solid #3a414e; border-radius:6px; padding:4px 0; box-shadow:0 6px 24px rgba(0,0,0,.45); z-index:9999; min-width:180px; color:#dbe2ea; font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
 .gt-menu .item { padding:6px 14px; cursor:pointer; font-size:13px; }
+.gt-menu.gt-favmenu { max-height:70vh; overflow:auto; min-width:220px; max-width:360px; }
+.gt-menu.gt-favmenu .item { display:flex; align-items:center; gap:8px; padding:3px 12px 3px 8px; }
+.gt-menu .gt-favthumb { flex:none; width:44px; height:25px; border-radius:3px; background:#181b21 center/cover no-repeat; border:1px solid #353c47; }
+.gt-menu .gt-favname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gt-menu .gt-favhead { padding:5px 14px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; opacity:.55; border-bottom:1px solid #3a414e; margin-bottom:4px; }
+.gt-menu .gt-favhint { padding:4px 14px 8px; font-size:12px; opacity:.6; font-style:italic; }
 .gt-menu .item:hover { background:#3b82f6; color:#fff; }
 .gt-menu .item.danger { color:#fca5a5; }
 .gt-menu .item.danger:hover { background:#dc2626; color:#fff; }
@@ -1389,12 +1395,13 @@ body.gt-lassoing, body.gt-lassoing * { user-select:none !important; cursor:cross
 .gt-chip:hover { background:#363d48; }
 .gt-fb-err { min-height:16px; margin-top:6px; color:#fca5a5; font-size:12px; }
 `;
-function injectCSS() {
-  if (doc.getElementById("gt-css")) return;
-  const s = doc.createElement("style");
+function injectCSS(targetDoc) {
+  const d = targetDoc || doc;
+  if (d.getElementById("gt-css")) return;
+  const s = d.createElement("style");
   s.id = "gt-css";
   s.textContent = CSS;
-  doc.head.appendChild(s);
+  d.head.appendChild(s);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3902,6 +3909,75 @@ app.registerExtension({
   },
 });
 
+// Favorites menu under the topbar icon (main window). Reads the tree if the
+// panel hasn't loaded it yet; every root except _Backup, sorted by name.
+let favMenu = null;
+function closeFavoritesMenu() {
+  if (favMenu) { favMenu.remove(); favMenu = null; }
+  APP_DOC.removeEventListener("pointerdown", onFavDocDown, true);
+  APP_DOC.removeEventListener("mousedown", onFavDocDown, true);
+  APP_DOC.removeEventListener("keydown", onFavKey, true);
+}
+function onFavDocDown(e) { if (favMenu && !favMenu.contains(e.target)) closeFavoritesMenu(); }
+function onFavKey(e) { if (e.key === "Escape") closeFavoritesMenu(); }
+async function showFavoritesMenu(anchor) {
+  closeFavoritesMenu();
+  injectCSS(APP_DOC);
+  if (!state.roots.length) { try { await refreshTree(); } catch (_) {} }
+  const favs = [];
+  for (const r of state.roots) {
+    if (!r || !r.tree || r.id === BACKUP_ROOT_ID) continue;
+    for (const f of collectFilesRecursive(r.tree)) {
+      if (f.favorite) favs.push({ root: r.id, rootLabel: rootDisplayLabel(r), path: f.path, thumb: f.thumb, bust: f.thumbMtime || f.mtime || 0 });
+    }
+  }
+  favs.sort((a, b) => baseName(a.path).toLowerCase().localeCompare(baseName(b.path).toLowerCase()));
+  const menu = APP_DOC.createElement("div");
+  menu.className = "gt-menu gt-favmenu";
+  const head = APP_DOC.createElement("div");
+  head.className = "gt-favhead";
+  head.textContent = favs.length ? "★ Favorites" : "No favorites yet";
+  menu.appendChild(head);
+  if (!favs.length) {
+    const hint = APP_DOC.createElement("div");
+    hint.className = "gt-favhint";
+    hint.textContent = "Star a workflow in G-Workflows and it shows up here.";
+    menu.appendChild(hint);
+  }
+  for (const fv of favs) {
+    const item = APP_DOC.createElement("div");
+    item.className = "item";
+    const th = APP_DOC.createElement("span");
+    th.className = "gt-favthumb";
+    if (fv.thumb) th.style.backgroundImage = `url("${API_BASE}/thumb?path=${encodeURIComponent(fv.thumb)}&root=${encodeURIComponent(fv.root)}&t=${fv.bust}")`;
+    const lab = APP_DOC.createElement("span");
+    lab.className = "gt-favname";
+    lab.textContent = baseName(fv.path).replace(/\.json$/i, "");
+    item.appendChild(th); item.appendChild(lab);
+    item.title = (fv.rootLabel ? fv.rootLabel + " / " : "") + fv.path;
+    item.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeFavoritesMenu();
+      loadWorkflow(fv.path, fv.root).then(() => { if (state.panelMounted) { renderGrid(); renderToolbar(); } })
+        .catch((err) => toast("Load failed: " + err.message));
+    });
+    menu.appendChild(item);
+  }
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = r.left + "px";
+  menu.style.top  = (r.bottom + 4) + "px";
+  APP_DOC.body.appendChild(menu);
+  favMenu = menu;
+  const mr = menu.getBoundingClientRect();
+  if (mr.right > window.innerWidth)   menu.style.left = Math.max(6, window.innerWidth - mr.width - 6) + "px";
+  if (mr.bottom > window.innerHeight) menu.style.maxHeight = (window.innerHeight - r.bottom - 12) + "px";
+  setTimeout(() => {
+    APP_DOC.addEventListener("pointerdown", onFavDocDown, true);
+    APP_DOC.addEventListener("mousedown", onFavDocDown, true);
+    APP_DOC.addEventListener("keydown", onFavKey, true);
+  }, 0);
+}
+
 function addTopbarButton() {
   if (APP_DOC.getElementById("gt-topbar-btn")) return;
   // Plain image button on the bar's own background; a 6px gap keeps it off
@@ -3916,9 +3992,25 @@ function addTopbarButton() {
   btn.appendChild(ico);
   btn.addEventListener("mouseenter", () => { ico.style.transform = "scale(1.08)"; ico.style.filter = "brightness(1.15)"; });
   btn.addEventListener("mouseleave", () => { ico.style.transform = ""; ico.style.filter = ""; });
-  btn.title = "G-Workflows";
+  btn.title = "G-Workflows — click to open · hold for favorites";
   btn.setAttribute("aria-label", "G-Workflows");
-  btn.addEventListener("click", openStandaloneWindow);
+  // Press-and-hold (200 ms) drops a favorites menu without opening the
+  // panel; a plain click still opens it. The click that ends a hold is
+  // swallowed so the window doesn't open on top of the menu.
+  let holdTimer = 0, holdFired = false;
+  btn.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    holdFired = false;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => { holdFired = true; showFavoritesMenu(btn); }, 200);
+  });
+  const cancelHold = () => clearTimeout(holdTimer);
+  btn.addEventListener("mouseup", cancelHold);
+  btn.addEventListener("mouseleave", cancelHold);
+  btn.addEventListener("click", (e) => {
+    if (holdFired) { holdFired = false; e.preventDefault(); e.stopPropagation(); return; }
+    openStandaloneWindow();
+  });
   let attempts = 0, observer = null, timeoutId = 0;
   const MAX = 60;
   const tryInject = () => {
