@@ -75,7 +75,7 @@ positions are remembered.
 Turn on **Subfolders** to see a folder and everything beneath it as one flat
 gallery:
 
-<a href="docs/Subfolders.mp4"><img src="docs/Subfolders-poster.webp" alt="Subfolders — click to play (5 s)" width="100%"></a>
+<a href="docs/Subfolders.mp4?raw=true"><img src="docs/Subfolders-poster.webp" alt="Subfolders — click to play (5 s)" width="100%"></a>
 <sub>▶ click to play · 5 s</sub>
 
 ### The Details panel
@@ -95,7 +95,7 @@ chip editor.
 The analysis runs once per file on the server and is cached until the file
 changes, so clicking around is instant.
 
-<a href="docs/SidePanel.mp4"><img src="docs/SidePanel-poster.webp" alt="SidePanel — click to play (10 s)" width="100%"></a>
+<a href="docs/SidePanel.mp4?raw=true"><img src="docs/SidePanel-poster.webp" alt="SidePanel — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
 ### List view
@@ -169,10 +169,10 @@ space and **drag a lasso** (Ctrl adds to what you have). A selected group
 drags as one — the ghost shows a stack with a count badge — whether you're
 arranging it, tagging it or moving it to a folder.
 
-<a href="docs/Reorder_Cards.mp4"><img src="docs/Reorder_Cards-poster.webp" alt="Reorder Cards — click to play (10 s)" width="100%"></a>
+<a href="docs/Reorder_Cards.mp4?raw=true"><img src="docs/Reorder_Cards-poster.webp" alt="Reorder Cards — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
-<a href="docs/Shorting.mp4"><img src="docs/Shorting-poster.webp" alt="Shorting — click to play (10 s)" width="100%"></a>
+<a href="docs/Shorting.mp4?raw=true"><img src="docs/Shorting-poster.webp" alt="Shorting — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
 **Keyboard.** **← →** step through cards, **↑ ↓** move a row (a real grid
@@ -188,7 +188,7 @@ breadcrumb or Details panel. The toolbar and the folder tree stay so you can
 keep navigating; hover a card for its name. Everything else (selection,
 lasso, arranging, drag to folders) keeps working.
 
-<a href="docs/Focus.mp4"><img src="docs/Focus-poster.webp" alt="Focus — click to play (10 s)" width="100%"></a>
+<a href="docs/Focus.mp4?raw=true"><img src="docs/Focus-poster.webp" alt="Focus — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
 ### Favorites — in the panel and from the top bar
@@ -205,7 +205,7 @@ order. Click one and it loads — the panel never opens. Drag rows in the menu
 to rearrange them; the panel's Favorites view follows. Click away or Esc to
 close. A plain click still opens the window.
 
-<a href="docs/Quick_Access.mp4"><img src="docs/Quick_Access-poster.webp" alt="Quick Access — click to play (10 s)" width="100%"></a>
+<a href="docs/Quick_Access.mp4?raw=true"><img src="docs/Quick_Access-poster.webp" alt="Quick Access — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
 ### Tags
@@ -256,7 +256,7 @@ opens the editor; **Copy tags** / **Paste tags** moves a workflow's tag list
 onto other selected workflows; **Clear tags** strips every tag from the
 selection (with confirmation).
 
-<a href="docs/ManualTags.mp4"><img src="docs/ManualTags-poster.webp" alt="ManualTags — click to play (10 s)" width="100%"></a>
+<a href="docs/ManualTags.mp4?raw=true"><img src="docs/ManualTags-poster.webp" alt="ManualTags — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
 ### AutoTag
@@ -284,7 +284,7 @@ picked up the next time the panel refreshes (it re-reads only files whose
 size or date moved). Tag pane counts and filters include auto tags, so
 "show me everything that runs on `wan 2.2`" is one click.
 
-<a href="docs/AutoTags.mp4"><img src="docs/AutoTags-poster.webp" alt="AutoTags — click to play (10 s)" width="100%"></a>
+<a href="docs/AutoTags.mp4?raw=true"><img src="docs/AutoTags-poster.webp" alt="AutoTags — click to play (10 s)" width="100%"></a>
 <sub>▶ click to play · 10 s</sub>
 
 ### Search — focused or global
