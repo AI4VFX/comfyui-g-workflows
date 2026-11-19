@@ -4259,25 +4259,15 @@ function addTopbarButton() {
     if (holdFired) { holdFired = false; e.preventDefault(); e.stopPropagation(); return; }
     openStandaloneWindow();
   });
-  let attempts = 0, observer = null, timeoutId = 0;
-  const MAX = 60;
-  const tryInject = () => {
-    attempts++;
-    if (btn.parentElement) { observer?.disconnect(); clearTimeout(timeoutId); return; }
-    if (attempts > MAX)    { observer?.disconnect(); clearTimeout(timeoutId); return; }
-    for (const cand of APP_DOC.querySelectorAll("button")) {
-      const txt = cand.textContent?.trim();
-      if (!txt || txt !== "Manager") continue;
-      const r = cand.getBoundingClientRect();
-      if (r.top > 100 || r.height === 0 || r.width === 0) continue;
-      const container = cand.parentElement;
-      if (container) { container.insertBefore(btn, cand); observer?.disconnect(); clearTimeout(timeoutId); return; }
-    }
-  };
-  tryInject();
-  if (!btn.parentElement) {
-    observer = new MutationObserver(tryInject);
-    observer.observe(APP_DOC.body, { childList: true, subtree: true });
-    timeoutId = setTimeout(() => observer?.disconnect(), 20000);
-  }
+  // The Manager button was replaced by Extensions in newer ComfyUI frontends,
+  // so it is not a stable anchor. Keep this control outside the Vue-managed
+  // topbar and place it beside the account button instead.
+  Object.assign(btn.style, {
+    position: "fixed",
+    top: "6px",
+    right: "60px",
+    zIndex: "100000",
+    pointerEvents: "auto",
+  });
+  APP_DOC.body.appendChild(btn);
 }
