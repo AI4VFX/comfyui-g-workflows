@@ -66,9 +66,11 @@ panel. *"Remove this location"* only unregisters it — your files are never
 touched.
 
 The left sidebar is split: **folders on top, tags on bottom**, with a drag
-handle between them. The **Details** panel sits on the right (toggle it with
-the ◨ button at the end of the toolbar, drag its edge to resize). Both
-positions are remembered.
+handle between them. Drag the sidebar's right edge to make it wider or
+narrower, and use the **size** slider under each list to scale its text
+(double-click the slider to reset). The **Details** panel sits on the right
+(toggle it with the ◨ button at the end of the toolbar, drag its edge to
+resize). All of these are remembered.
 
 <img src="docs/01.GW_Menu-UI.webp" alt="Folder tree, tag pane, gallery and Details panel" width="100%">
 
