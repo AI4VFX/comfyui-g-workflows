@@ -28,6 +28,10 @@ let   dragRoot  = null;                        // root id those paths belong to
 const analysisCache = new Map();               // "root|path|mtime" -> /analysis payload
 const CARD_BASE = 160;                         // default grid column min (px); slider & preview base
 const LIST_COL_DEFAULT = [220, 170, 300, 200, 260, 90]; // default list column px widths (Name,Date,Desc,Tags,Path,Size)
+const SIDE_SCALE_MIN = 0.7;                    // folder-list / tag-list text zoom clamp
+const SIDE_SCALE_MAX = 2.0;
+const SIDE_MIN_W = 160;                        // left sidebar width clamp (px)
+const SIDE_MAX_W = 700;
 const DETAIL_MIN_W = 200;                      // Details panel width clamp (px)
 const DETAIL_MAX_W = 900;
 const LIST_COL_MIN = 60;                       // min px width per list column when resizing
@@ -75,6 +79,9 @@ const state = {
   autoBackupCountPerFile: 10,      // ring-buffer size per workflow (1–50)
   detailOpen: true,           // right-hand Details panel shown (collapsed = narrow strip)
   detailW: 320,               // Details panel width px (drag the splitter; persisted)
+  sideW: 230,                 // left sidebar width px (drag its right edge; persisted)
+  treeScale: 1,               // folder-list text zoom ("size" slider under the list; persisted)
+  tagScale: 1,                // tag-list text zoom, independent of the folder list
   focusPath: null,            // file shown in the Details panel = last clicked (transient)
   focusRoot: null,            // root id of focusPath
   manualSort: false,          // cards follow the folder's drag-and-drop order (.gworder.json)
@@ -152,6 +159,14 @@ function loadLS() {
     if (typeof parsed.detailOpen === "boolean") state.detailOpen = parsed.detailOpen;
     if (typeof parsed.manualSort === "boolean") state.manualSort = parsed.manualSort;
     if (typeof parsed.focusMode === "boolean") state.focusMode = parsed.focusMode;
+    for (const k of ["treeScale", "tagScale"]) {
+      if (typeof parsed[k] === "number" && parsed[k] >= SIDE_SCALE_MIN && parsed[k] <= SIDE_SCALE_MAX) {
+        state[k] = parsed[k];
+      }
+    }
+    if (typeof parsed.sideW === "number" && parsed.sideW >= SIDE_MIN_W && parsed.sideW <= SIDE_MAX_W) {
+      state.sideW = Math.round(parsed.sideW);
+    }
     if (typeof parsed.detailW === "number" && parsed.detailW >= DETAIL_MIN_W && parsed.detailW <= DETAIL_MAX_W) {
       state.detailW = Math.round(parsed.detailW);
     }
@@ -190,6 +205,9 @@ function saveLS() {
       autoBackupCountPerFile: state.autoBackupCountPerFile,
       detailOpen: state.detailOpen,
       detailW: state.detailW,
+      sideW: state.sideW,
+      treeScale: state.treeScale,
+      tagScale: state.tagScale,
       manualSort: state.manualSort,
       focusMode: state.focusMode,
     }));
@@ -394,8 +412,8 @@ async function doSaveTo(relPath, overwrite, rootId, rebindActive) {
 // File / folder mutations
 // ─────────────────────────────────────────────────────────────────────────────
 async function renameFile(fromPath) {
-  const oldName = baseName(fromPath);
-  const newName = await promptModal("Rename workflow", "New filename:", oldName);
+  const oldName = baseName(fromPath).replace(/\.json$/i, "");
+  const newName = await promptModal("Rename workflow", "New name:", oldName);
   if (!newName) return;
   let nn = newName.trim();
   if (!nn) return;
@@ -413,8 +431,8 @@ async function renameFile(fromPath) {
 
 async function duplicateFile(fromPath) {
   const base = baseName(fromPath).replace(/\.json$/i, "");
-  const proposed = `${base}_copy.json`;
-  const newName = await promptModal("Duplicate workflow", "New filename:", proposed);
+  const proposed = `${base}_copy`;
+  const newName = await promptModal("Duplicate workflow", "New name:", proposed);
   if (!newName) return;
   let nn = newName.trim();
   if (!nn) return;
@@ -1196,12 +1214,16 @@ const CSS = `
 .gt-search-x.on { background:#3b82f6; color:#fff; border-color:#3b82f6; }
 .gt-search-x.on:hover { background:#2563eb; border-color:#2563eb; }
 .gt-body { display:flex; flex:1; min-height:0; overflow:hidden; }
-.gt-side { display:flex; flex-direction:column; width:230px; min-width:160px; max-width:50%; border-right:1px solid #303540; resize:horizontal; }
-.gt-tree { flex:none; overflow:auto; padding:6px 4px; min-height:80px; }
+.gt-side { display:flex; flex-direction:column; flex:none; width:230px; min-width:160px; max-width:60%; }
+.gt-tree { flex:none; overflow:auto; padding:6px 4px 0; min-height:80px; font-size:calc(13px * var(--gt-tree-scale,1)); display:flex; flex-direction:column; }
+.gt-tree > *, .gt-tagpane > * { flex:none; }
+.gt-side-foot { position:sticky; bottom:0; z-index:1; margin:auto -4px 0; padding:5px 10px 6px; display:flex; align-items:center; gap:8px; font-size:11px; color:#9aa6b2; background:var(--comfy-menu-bg,#1f2227); border-top:1px solid #303540; }
+.gt-tagpane > .gt-side-foot { background:#1d2128; }
+.gt-side-foot input[type=range] { flex:1; min-width:0; cursor:pointer; }
 .gt-split { flex:none; height:6px; background:#2a2f38; border-top:1px solid #303540; border-bottom:1px solid #303540; cursor:row-resize; position:relative; }
 .gt-split::after { content:""; position:absolute; left:50%; top:50%; width:30px; height:2px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
 .gt-split:hover::after { background:#3b82f6; }
-.gt-tagpane { flex:1; overflow:auto; padding:6px 4px; min-height:80px; background:#1d2128; }
+.gt-tagpane { flex:1; overflow:auto; padding:6px 4px 0; min-height:80px; background:#1d2128; display:flex; flex-direction:column; }
 .gt-tagpane .gt-tphead { display:flex; align-items:center; gap:6px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; padding:4px 6px 6px; }
 .gt-tagpane .gt-tphead .lab { flex:1; opacity:.55; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-tagpane .gt-tphead .btn { background:transparent; border:1px solid #3a414e; color:#dbe2ea; padding:0 6px 1px; border-radius:3px; font:bold 13px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
@@ -1217,13 +1239,13 @@ const CSS = `
 .gt-tagpane .gt-tprow.drop-target { outline:2px dashed #3b82f6; outline-offset:-2px; background:#1f2733; }
 .gt-tagpane .gt-tprow.drop-target-tag { box-shadow:inset 0 2px 0 #3b82f6; }
 .gt-tagpane .gt-tprow.dragging { opacity:.4; }
-.gt-tagpane .gt-tprow .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-.gt-tagpane .gt-tprow .count { opacity:.55; font-size:11px; }
+.gt-tagpane .gt-tprow .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(12px * var(--gt-tag-scale,1)); }
+.gt-tagpane .gt-tprow .count { opacity:.55; font-size:calc(11px * var(--gt-tag-scale,1)); }
 .gt-tagpane .gt-tpempty { padding:8px 6px; font-size:11px; opacity:.55; font-style:italic; }
 .gt-grid-wrap { flex:1; min-width:0; overflow:auto; padding:8px 8px 52px 8px; }
-.gt-vsplit { flex:none; width:6px; background:#2a2f38; border-left:1px solid #303540; border-right:1px solid #303540; cursor:col-resize; position:relative; }
-.gt-vsplit::after { content:""; position:absolute; left:50%; top:50%; width:2px; height:30px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
-.gt-vsplit:hover::after { background:#3b82f6; }
+.gt-vsplit, .gt-lsplit { flex:none; width:6px; background:#2a2f38; border-left:1px solid #303540; border-right:1px solid #303540; cursor:col-resize; position:relative; }
+.gt-vsplit::after, .gt-lsplit::after { content:""; position:absolute; left:50%; top:50%; width:2px; height:30px; background:#4a525e; border-radius:1px; transform:translate(-50%,-50%); }
+.gt-vsplit:hover::after, .gt-lsplit:hover::after { background:#3b82f6; }
 .gt-detail { flex:none; width:320px; min-width:0; overflow:auto; background:#1d2128; display:flex; flex-direction:column; }
 .gt-detail.collapsed { display:none; }
 .gt-dhead { display:flex; align-items:center; gap:6px; padding:6px 8px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid #303540; position:sticky; top:0; background:#1d2128; z-index:1; }
@@ -1263,8 +1285,8 @@ const CSS = `
 .gt-tnode { display:flex; align-items:center; padding:3px 4px; gap:4px; border-radius:4px; cursor:pointer; user-select:none; }
 .gt-tnode:hover { background:#2b313a; }
 .gt-tnode.active { background:#3b82f6; color:#fff; }
-.gt-tnode .twirl { width:14px; height:14px; display:inline-flex; justify-content:center; align-items:center; opacity:.6; }
-.gt-tnode .icon  { width:14px; opacity:.75; }
+.gt-tnode .twirl { width:calc(14px * var(--gt-tree-scale,1)); height:calc(14px * var(--gt-tree-scale,1)); display:inline-flex; justify-content:center; align-items:center; opacity:.6; }
+.gt-tnode .icon  { width:calc(14px * var(--gt-tree-scale,1)); opacity:.75; }
 .gt-tnode .label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-tnode.drop-target { outline:2px dashed #3b82f6; outline-offset:-2px; }
 .gt-tchildren { margin-left:14px; }
@@ -2093,7 +2115,27 @@ function buildPanel(host) {
   state.tagPaneEl = tagPaneEl;
 
   body.appendChild(side);
+  // Full-height drag edge between the sidebar and the gallery.
+  const lsplit = el("div", { class: "gt-lsplit", attrs: { title: "Drag to resize" } });
+  body.appendChild(lsplit);
   body.appendChild(gridWrap);
+  side.style.width = state.sideW + "px";
+  let lDragX = 0, lDragW = 0;
+  lsplit.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    lDragX = e.clientX; lDragW = side.getBoundingClientRect().width;
+    doc.addEventListener("mousemove", onLMove);
+    doc.addEventListener("mouseup",   onLUp);
+  });
+  function onLMove(e) {
+    state.sideW = Math.round(Math.max(SIDE_MIN_W, Math.min(SIDE_MAX_W, lDragW + (e.clientX - lDragX))));
+    side.style.width = state.sideW + "px";
+  }
+  function onLUp() {
+    doc.removeEventListener("mousemove", onLMove);
+    doc.removeEventListener("mouseup",   onLUp);
+    saveLS();
+  }
 
   // Right-hand Details panel with its own drag splitter (CSS resize only
   // grabs the bottom-right corner, which would grow the wrong way here).
@@ -2358,13 +2400,33 @@ function renderBreadcrumb() {
   appendCount();
 }
 
+// "size" slider pinned under a sidebar list (same control as the G-Prompts
+// tag list). It writes the CSS variable straight onto the list, so dragging
+// never re-renders; double-click resets to 100%. `key` is the state field
+// ("treeScale" | "tagScale") — each list keeps its own zoom.
+function sideZoomFoot(key, target, cssVar, title) {
+  const slider = el("input", { attrs: { type: "range", min: String(SIDE_SCALE_MIN * 100),
+    max: String(SIDE_SCALE_MAX * 100), step: "1", title } });
+  slider.value = String(Math.round(state[key] * 100));
+  const apply = (v) => {
+    state[key] = v;
+    saveLS();
+    target.style.setProperty(cssVar, String(v));
+  };
+  slider.addEventListener("input", () => apply(slider.value / 100));
+  slider.addEventListener("dblclick", () => { slider.value = "100"; apply(1); });
+  return el("div", { class: "gt-side-foot" }, el("span", { text: "size" }), slider);
+}
+
 function renderTree() {
   if (!treeEl) return;
   clear(treeEl);
+  treeEl.style.setProperty("--gt-tree-scale", String(state.treeScale));
   for (const r of state.roots) {
     const top = r.tree || { name: "", path: "", folders: [], files: [] };
     renderTreeNode(top, treeEl, 0, r, true);
   }
+  treeEl.appendChild(sideZoomFoot("treeScale", treeEl, "--gt-tree-scale", "Folder list text size (double-click to reset)"));
 }
 
 function renderTagPane() {
@@ -2380,6 +2442,7 @@ function renderTagPane() {
 
   // Header: label + "Name" 3-state sort + "+" (add empty tag) + "−" (delete active).
   const head = el("div", { class: "gt-tphead" });
+  host.style.setProperty("--gt-tag-scale", String(state.tagScale));
   const lab  = el("span", { class: "lab", text: totalTags ? `Tags · ${totalTags} in use` : "Tags" });
   head.appendChild(lab);
   const sortLabel = state.tagSort === "asc"  ? "Name ▲"
@@ -2497,6 +2560,7 @@ function renderTagPane() {
     });
     host.appendChild(row);
   }
+  host.appendChild(sideZoomFoot("tagScale", host, "--gt-tag-scale", "Tag list text size (double-click to reset)"));
 }
 
 // node: a folder node within rootObj's tree (rel path in node.path).
@@ -2525,7 +2589,7 @@ function renderTreeNode(node, parentEl, depth, rootObj, isRoot) {
     ? (isDefault ? "workflows" : (rootObj.label || rootObj.abspath))
     : (node.name || "workflows");
   if (isRoot && !isDefault) row.title = rootObj.abspath + (offline ? "  (offline)" : "");
-  row.style.paddingLeft = (depth * 12) + "px";
+  row.style.paddingLeft = "calc(" + (depth * 12) + "px * var(--gt-tree-scale,1))";
   row.appendChild(twirl); row.appendChild(icon); row.appendChild(label);
 
   row.addEventListener("click", (e) => {
